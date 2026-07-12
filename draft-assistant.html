@@ -1,0 +1,2279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>🏈 Killabeez Fantasy Draft Assistant</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface2: #263146;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --orange: #f97316;
+      --red: #ef4444;
+      --purple: #a855f7;
+      --ai: #818cf8;
+
+      --qb: #3b82f6;
+      --rb: #22c55e;
+      --wr: #a855f7;
+      --te: #f97316;
+      --k: #94a3b8;
+      --def: #ef4444;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      height: 100dvh; /* mobile browsers: exclude address bar */
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 18px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+    header .tagline { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    header .spacer { flex: 1; }
+    .btn {
+      padding: 6px 13px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: opacity .15s;
+      white-space: nowrap;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: var(--accent); color: #000; }
+    .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-ai { background: rgba(129,140,248,.15); color: var(--ai); border: 1px solid rgba(129,140,248,.4); }
+    .btn-ai.active { background: var(--ai); color: #fff; }
+
+    /* ── Loading overlay ── */
+    #loading {
+      position: fixed; inset: 0;
+      background: rgba(15,23,42,.92);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px; z-index: 999;
+    }
+    #loading.hidden { display: none; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    .spinner-ai {
+      border-top-color: var(--ai);
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Main layout ── */
+    .app-body { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Left Sidebar ── */
+    .sidebar {
+      width: 256px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .sidebar-section { border-bottom: 1px solid var(--border); padding: 12px 14px; }
+    .sidebar-section h3 {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--muted); margin-bottom: 8px;
+    }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .setting-row label { font-size: 12px; color: var(--text); }
+
+    .queue-list { flex: 1; overflow-y: auto; padding: 6px; }
+    .queue-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 7px; border-radius: 5px;
+      background: var(--surface2); margin-bottom: 3px; font-size: 12px;
+    }
+    .queue-item .q-name { flex: 1; font-weight: 600; }
+    .queue-item .q-remove { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+    .queue-item .q-remove:hover { color: var(--red); }
+    .queue-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 16px 0; }
+
+    /* ── Main board ── */
+    .main-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0; flex-wrap: wrap;
+      background: var(--surface);
+    }
+    .pos-tabs { display: flex; gap: 3px; }
+    .pos-tab {
+      padding: 4px 10px; border-radius: 5px;
+      border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      cursor: pointer; font-size: 11px; font-weight: 700;
+      transition: all .15s;
+    }
+    .pos-tab.active { color: #fff; border-color: transparent; }
+    .pos-tab[data-pos=ALL].active { background: var(--accent); }
+    .pos-tab[data-pos=QB].active  { background: var(--qb); }
+    .pos-tab[data-pos=RB].active  { background: var(--rb); }
+    .pos-tab[data-pos=WR].active  { background: var(--wr); }
+    .pos-tab[data-pos=TE].active  { background: var(--te); }
+    .pos-tab[data-pos=K].active   { background: var(--k); }
+    .pos-tab[data-pos=DEF].active { background: var(--def); }
+
+    .search-box {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; padding: 5px 10px;
+      font-size: 12px; width: 180px;
+    }
+    .search-box::placeholder { color: var(--muted); }
+    .search-box:focus { outline: none; border-color: var(--accent); }
+    .toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .show-drafted-label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+
+    /* ── Table ── */
+    .table-wrap { flex: 1; overflow-y: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      position: sticky; top: 0;
+      background: var(--surface2); color: var(--muted);
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .06em; padding: 8px 9px;
+      text-align: left; border-bottom: 1px solid var(--border);
+      cursor: pointer; user-select: none; white-space: nowrap;
+    }
+    thead th:hover { color: var(--text); }
+    thead th.sorted { color: var(--accent); }
+    thead th .sort-arrow { margin-left: 2px; opacity: .6; }
+
+    tbody tr { border-bottom: 1px solid rgba(51,65,85,.4); transition: background .1s; }
+    tbody tr:hover { background: rgba(30,41,59,.6); }
+    tbody tr.drafted { opacity: .35; }
+    tbody tr.in-queue { background: rgba(56,189,248,.05); }
+
+    td { padding: 7px 9px; font-size: 12px; vertical-align: middle; }
+    .rank { color: var(--muted); font-size: 11px; width: 32px; }
+    .player-name { font-weight: 600; font-size: 13px; }
+    .player-info { font-size: 10px; color: var(--muted); }
+
+    .pos-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+    .pos-QB  { background: rgba(59,130,246,.2); color: var(--qb); }
+    .pos-RB  { background: rgba(34,197,94,.2);  color: var(--rb); }
+    .pos-WR  { background: rgba(168,85,247,.2); color: var(--wr); }
+    .pos-TE  { background: rgba(249,115,22,.2); color: var(--te); }
+    .pos-K   { background: rgba(148,163,184,.2);color: var(--k); }
+    .pos-DEF { background: rgba(239,68,68,.2);  color: var(--def); }
+
+    .inj-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+    .inj-Q   { background: rgba(234,179,8,.15); color: var(--yellow); border: 1px solid var(--yellow); }
+    .inj-D   { background: rgba(249,115,22,.15);color: var(--orange); border: 1px solid var(--orange); }
+    .inj-O   { background: rgba(239,68,68,.2);  color: var(--red);    border: 1px solid var(--red); }
+    .inj-IR  { background: rgba(239,68,68,.3);  color: #fca5a5;       border: 1px solid #fca5a5; }
+    .inj-PUP { background: rgba(239,68,68,.3);  color: #fca5a5;       border: 1px solid #fca5a5; }
+
+    .depth-1 { color: var(--green); font-weight: 700; font-size: 11px; }
+    .depth-2 { color: var(--yellow); font-size: 11px; }
+    .depth-3 { color: var(--muted); font-size: 11px; }
+
+    .bye-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; background: var(--surface2); }
+    .bye-early { background: rgba(34,197,94,.15); color: var(--green); }
+    .bye-late  { background: rgba(234,179,8,.15); color: var(--yellow); }
+
+    .action-cell { display: flex; gap: 3px; }
+    .btn-queue {
+      background: rgba(56,189,248,.08); border: 1px solid rgba(56,189,248,.25);
+      color: var(--accent); padding: 2px 7px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: 600;
+    }
+    .btn-queue:hover { background: rgba(56,189,248,.18); }
+    .btn-queue.queued { background: var(--accent); color: #000; }
+    .btn-draft {
+      background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.25);
+      color: var(--green); padding: 2px 7px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: 600;
+    }
+    .btn-draft:hover { background: rgba(34,197,94,.18); }
+    .btn-undraft {
+      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
+      color: var(--red); padding: 2px 7px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: 600;
+    }
+    .btn-analyze {
+      background: rgba(129,140,248,.08); border: 1px solid rgba(129,140,248,.25);
+      color: var(--ai); padding: 2px 7px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: 600;
+    }
+    .btn-analyze:hover { background: rgba(129,140,248,.2); }
+
+    /* ── Stats bar ── */
+    .stats-bar {
+      padding: 7px 14px; border-top: 1px solid var(--border);
+      background: var(--surface); display: flex; gap: 18px;
+      font-size: 11px; color: var(--muted); flex-shrink: 0; align-items: center;
+    }
+    .stats-bar span { color: var(--text); font-weight: 600; }
+
+    /* ── AI Panel ── */
+    .ai-panel {
+      width: 360px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      transition: width .25s ease;
+      overflow: hidden;
+    }
+    .ai-panel.collapsed { width: 0; border-left: none; }
+
+    .ai-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+      background: linear-gradient(135deg, rgba(129,140,248,.1), rgba(56,189,248,.05));
+      flex-shrink: 0;
+    }
+    .ai-header h3 { font-size: 14px; font-weight: 700; color: var(--ai); flex: 1; }
+    .ai-model-badge {
+      font-size: 10px; color: var(--muted);
+      background: var(--surface2); border: 1px solid var(--border);
+      padding: 2px 6px; border-radius: 3px;
+    }
+
+    /* API key section */
+    .ai-key-section {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .ai-key-row { display: flex; gap: 6px; align-items: center; }
+    .ai-key-input {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 5px; padding: 5px 8px; font-size: 12px;
+      font-family: monospace;
+    }
+    .ai-key-input:focus { outline: none; border-color: var(--ai); }
+    .btn-set-key {
+      background: var(--ai); color: #fff; border: none;
+      padding: 5px 10px; border-radius: 5px; font-size: 12px;
+      font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .key-status { font-size: 11px; margin-top: 4px; }
+    .key-ok { color: var(--green); }
+    .key-bad { color: var(--red); }
+
+    /* Quick actions */
+    .ai-quick {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; gap: 5px; flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    .btn-quick {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); padding: 5px 10px; border-radius: 5px;
+      font-size: 11px; font-weight: 600; cursor: pointer;
+      transition: all .15s;
+    }
+    .btn-quick:hover { border-color: var(--ai); color: var(--ai); }
+    .btn-quick:disabled { opacity: .4; cursor: default; }
+
+    /* Chat messages */
+    .ai-messages {
+      flex: 1; overflow-y: auto;
+      padding: 10px 14px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .ai-welcome {
+      background: rgba(129,140,248,.08); border: 1px solid rgba(129,140,248,.2);
+      border-radius: 8px; padding: 12px;
+    }
+    .ai-welcome p { font-size: 12px; color: var(--muted); line-height: 1.6; }
+    .ai-welcome strong { color: var(--ai); }
+
+    .msg {
+      border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.6;
+    }
+    .msg-user {
+      background: rgba(56,189,248,.1); border: 1px solid rgba(56,189,248,.2);
+      color: var(--text); align-self: flex-end; max-width: 90%;
+    }
+    .msg-ai {
+      background: rgba(129,140,248,.08); border: 1px solid rgba(129,140,248,.15);
+      color: var(--text);
+    }
+    .msg-ai strong { color: var(--ai); }
+    .msg-ai .msg-label { font-size: 10px; font-weight: 700; color: var(--ai); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 5px; }
+    .msg-ai h4 { font-size: 12px; font-weight: 700; color: var(--text); margin: 6px 0 3px; }
+    .msg-ai ul { padding-left: 14px; margin: 4px 0; }
+    .msg-ai li { margin-bottom: 2px; }
+    .msg-error {
+      background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3);
+      color: #fca5a5;
+    }
+
+    .ai-thinking {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 8px;
+      background: rgba(129,140,248,.06); border: 1px solid rgba(129,140,248,.12);
+      font-size: 12px; color: var(--muted);
+    }
+    .ai-thinking.hidden { display: none; }
+    .dot-anim span {
+      display: inline-block; width: 5px; height: 5px;
+      background: var(--ai); border-radius: 50%;
+      margin: 0 1px;
+      animation: blink 1.2s infinite;
+    }
+    .dot-anim span:nth-child(2) { animation-delay: .2s; }
+    .dot-anim span:nth-child(3) { animation-delay: .4s; }
+    @keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+
+    /* Chat input */
+    .ai-input-row {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      display: flex; gap: 6px;
+      flex-shrink: 0;
+    }
+    .ai-input {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; padding: 7px 10px;
+      font-size: 12px; resize: none; height: 36px;
+      font-family: inherit;
+    }
+    .ai-input:focus { outline: none; border-color: var(--ai); }
+    .btn-send {
+      background: var(--ai); color: #fff; border: none;
+      padding: 7px 12px; border-radius: 6px; font-size: 13px;
+      cursor: pointer; font-weight: 700;
+    }
+    .btn-send:disabled { opacity: .4; cursor: default; }
+
+    /* ── Settings Modal ── */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .modal-overlay.hidden { display: none; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 22px; width: 500px;
+      max-height: 80vh; overflow-y: auto;
+    }
+    .modal h2 { font-size: 17px; font-weight: 700; margin-bottom: 18px; }
+    .modal-section-title {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+      color: var(--muted); margin: 14px 0 8px;
+      padding-bottom: 5px; border-bottom: 1px solid var(--border);
+    }
+    .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .modal-field { display: flex; flex-direction: column; gap: 3px; }
+    .modal-field label { font-size: 11px; color: var(--muted); }
+    .modal-field select, .modal-field input {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 5px; padding: 6px 9px; font-size: 12px;
+    }
+    .modal-scoring-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px 14px; }
+    .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
+    /* misc */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .error-banner { background: rgba(239,68,68,.12); border: 1px solid var(--red); color: #fca5a5; padding: 8px 14px; font-size: 12px; text-align: center; }
+    .error-banner.hidden { display: none; }
+
+    /* ── Mobile / tablet responsive ── */
+    .menu-btn { display: none; }
+    .sidebar-close { display: none; width: 100%; padding: 10px; background: var(--surface2); border: none; border-bottom: 1px solid var(--border); color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; }
+    .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 94; }
+    .sidebar.open + .sidebar-backdrop { display: block; }
+
+    @media (max-width: 1100px) {
+      /* AI panel becomes a slide-over */
+      .ai-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100vw); z-index: 96; box-shadow: -8px 0 30px rgba(0,0,0,.5); }
+      .ai-panel.collapsed { width: 0; box-shadow: none; }
+    }
+
+    @media (max-width: 820px) {
+      header { padding: 8px 10px; gap: 8px; flex-wrap: wrap; }
+      header .tagline, #data-status { display: none; }
+      header h1 { font-size: 15px; }
+      .view-tabs { order: 10; width: 100%; }
+      .view-tab { flex: 1; padding: 7px 2px; font-size: 11px; }
+      .menu-btn { display: inline-block; }
+
+      /* Sidebar becomes a slide-in drawer */
+      .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: min(300px, 85vw); z-index: 95; transform: translateX(-105%); transition: transform .22s ease; box-shadow: 8px 0 30px rgba(0,0,0,.5); }
+      .sidebar.open { transform: translateX(0); }
+      .sidebar-close { display: block; }
+
+      .toolbar { padding: 8px; gap: 6px; }
+      .pos-tabs { width: 100%; }
+      .pos-tab { flex: 1; padding: 7px 0; text-align: center; }
+      .search-box { flex: 1; width: auto; min-width: 120px; }
+      .toolbar-right { width: 100%; margin-left: 0; justify-content: space-between; }
+
+      /* Slim table: hide Bye / Status / Depth / 2025 Pts columns */
+      #player-table th:nth-child(5), #player-table td:nth-child(5),
+      #player-table th:nth-child(6), #player-table td:nth-child(6),
+      #player-table th:nth-child(7), #player-table td:nth-child(7),
+      #player-table th:nth-child(9), #player-table td:nth-child(9) { display: none; }
+      td { padding: 9px 6px; }
+      .btn-queue, .btn-draft, .btn-undraft, .btn-analyze { padding: 7px 10px; font-size: 12px; }
+      .stats-bar > div:last-child { display: none; } /* injury legend */
+
+      .modal { width: 94vw; padding: 16px; max-height: 88vh; }
+      .modal-scoring-grid { grid-template-columns: 1fr 1fr; }
+      .modal-footer { flex-wrap: wrap; }
+      .draft-bar { flex-wrap: wrap; padding: 6px 8px; gap: 6px; }
+    }
+
+    /* Streaming cursor */
+    .cursor { display: inline-block; width: 2px; height: 12px; background: var(--ai); margin-left: 1px; animation: blink-cursor .8s steps(1) infinite; vertical-align: middle; }
+    @keyframes blink-cursor { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    /* ── Draft mode bar ── */
+    .draft-bar {
+      background: linear-gradient(90deg, rgba(56,189,248,.1), rgba(129,140,248,.06));
+      border-bottom: 1px solid var(--border);
+      padding: 7px 16px;
+      display: flex; align-items: center; gap: 10px;
+      flex-shrink: 0; font-size: 12px;
+    }
+    .draft-bar.hidden { display: none; }
+    .pick-indicator {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 12px;
+      font-weight: 700; font-size: 12px;
+    }
+    .pick-indicator.my-pick { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,.1); }
+
+    /* ── View tabs ── */
+    .view-tabs { display: flex; gap: 2px; background: var(--surface2); border-radius: 6px; padding: 3px; }
+    .view-tab {
+      padding: 4px 12px; border-radius: 4px;
+      border: none; background: transparent; color: var(--muted);
+      cursor: pointer; font-size: 12px; font-weight: 600; transition: all .15s;
+    }
+    .view-tab.active { background: var(--surface); color: var(--text); }
+    .view-hidden { display: none !important; }
+
+    /* ── Draft board grid ── */
+    .draft-board-wrap { flex: 1; overflow: auto; padding: 10px; }
+    .draft-grid { border-collapse: collapse; font-size: 11px; min-width: max-content; }
+    .draft-grid th {
+      padding: 6px 8px; text-align: center;
+      border: 1px solid var(--border);
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; white-space: nowrap;
+      position: sticky; top: 0; background: var(--surface2);
+    }
+    .draft-grid th.my-col { background: rgba(56,189,248,.15); color: var(--accent); }
+    .draft-grid td {
+      padding: 4px 7px; border: 1px solid rgba(51,65,85,.4);
+      min-width: 100px; max-width: 130px; vertical-align: top;
+    }
+    .draft-grid td.round-lbl {
+      color: var(--muted); font-weight: 700; font-size: 10px;
+      text-align: center; background: var(--surface2);
+      position: sticky; left: 0; min-width: 36px; max-width: 36px;
+    }
+    .draft-grid td.my-col { background: rgba(56,189,248,.04); }
+    .draft-grid td.cur-pick { background: rgba(234,179,8,.12); border-color: var(--yellow) !important; }
+    .gcell-name { font-weight: 600; color: var(--text); font-size: 11px; }
+    .gcell-meta { color: var(--muted); font-size: 10px; margin-top: 1px; }
+    .gcell-empty { color: var(--border); font-size: 10px; font-style: italic; }
+
+    /* ── Pick log ── */
+    .pick-log { flex: 1; overflow-y: auto; padding: 8px; }
+    .pick-log-item {
+      display: flex; align-items: center; gap: 7px;
+      padding: 5px 9px; border-radius: 5px; margin-bottom: 3px;
+      font-size: 12px; background: var(--surface2);
+    }
+    .pick-log-item.mine { background: rgba(56,189,248,.07); border-left: 2px solid var(--accent); }
+    .p-num  { color: var(--muted); font-size: 10px; width: 30px; flex-shrink: 0; }
+    .p-rd   { color: var(--muted); font-size: 10px; width: 44px; flex-shrink: 0; }
+    .p-team { font-weight: 600; width: 86px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .p-plyr { flex: 1; font-weight: 600; }
+
+    /* ── Team assign modal ── */
+    .team-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; margin-top: 8px; }
+    .team-btn {
+      padding: 7px 5px; border-radius: 5px;
+      border: 1px solid var(--border); background: var(--surface2);
+      color: var(--text); cursor: pointer; font-size: 11px; font-weight: 600;
+      text-align: center; transition: all .15s;
+    }
+    .team-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .team-btn.mine { border-color: var(--accent); background: rgba(56,189,248,.1); }
+
+    /* ── Setup modal ── */
+    .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 8px; max-height: 300px; overflow-y: auto; }
+    .setup-row {
+      display: flex; align-items: center; gap: 5px;
+      background: var(--surface2); border-radius: 5px;
+      padding: 5px 7px; border: 1px solid var(--border);
+    }
+    .setup-row.mine { border-color: var(--accent); }
+    .setup-num { color: var(--muted); font-size: 10px; width: 18px; flex-shrink: 0; }
+    .setup-inp { flex: 1; background: transparent; border: none; color: var(--text); font-size: 12px; outline: none; }
+    .setup-mine-btn {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 3px; padding: 2px 5px; font-size: 10px; cursor: pointer; white-space: nowrap;
+    }
+    .setup-mine-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,.1); }
+    .mode-toggle { display: flex; gap: 6px; margin-top: 8px; }
+    .mode-opt {
+      flex: 1; padding: 10px 8px; border-radius: 7px;
+      border: 1px solid var(--border); background: var(--surface2);
+      color: var(--muted); cursor: pointer; text-align: center; transition: all .15s;
+    }
+    .mode-opt.active { border-color: var(--accent); background: rgba(56,189,248,.1); color: var(--text); }
+    .mode-icon { font-size: 18px; }
+    .mode-lbl { font-size: 12px; font-weight: 700; margin-top: 3px; }
+    .mode-dsc { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+
+    /* ── Teams view ── */
+    .teams-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .team-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .team-card.my-team-card { border-color: var(--accent); }
+    .team-card-header {
+      padding: 9px 12px;
+      background: var(--surface2);
+      display: flex; align-items: center; gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .team-card-header.mine { background: rgba(56,189,248,.12); }
+    .team-card-name {
+      font-weight: 700; font-size: 13px; flex: 1;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .team-card-name input {
+      background: transparent; border: none; color: var(--text);
+      font-size: 13px; font-weight: 700; width: 100%;
+      outline: none; cursor: pointer;
+    }
+    .team-card-name input:focus { border-bottom: 1px solid var(--accent); cursor: text; }
+    .team-card-picks { font-size: 10px; color: var(--muted); white-space: nowrap; }
+    .team-card-body { padding: 8px 10px; }
+    .team-pos-group { margin-bottom: 6px; }
+    .team-pos-label {
+      font-size: 9px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--muted); margin-bottom: 3px;
+    }
+    .team-player-row {
+      display: flex; align-items: center; gap: 5px;
+      padding: 2px 0; font-size: 11px;
+    }
+    .team-player-pick { color: var(--muted); font-size: 10px; width: 22px; flex-shrink: 0; }
+    .team-player-name { font-weight: 600; flex: 1; }
+    .team-player-team { color: var(--muted); font-size: 10px; }
+    .team-empty { color: var(--muted); font-size: 11px; font-style: italic; padding: 4px 0; }
+    .team-no-draft {
+      text-align: center; color: var(--muted);
+      padding: 48px 20px; font-size: 13px;
+    }
+
+  </style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading">
+  <div class="spinner" id="spinner"></div>
+  <p id="loading-msg">Loading player data from Sleeper API…</p>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-overlay hidden" id="settings-modal">
+  <div class="modal">
+    <h2>⚙️ League Settings</h2>
+    <div class="modal-section-title">League Structure</div>
+    <div class="modal-grid">
+      <div class="modal-field"><label>Number of Teams</label>
+        <select id="ms-teams"><option value="8">8</option><option value="10">10</option><option value="12" selected>12</option><option value="14">14</option><option value="16">16</option></select>
+      </div>
+      <div class="modal-field"><label>Draft Rounds</label><input type="number" id="ms-rounds" value="15" min="10" max="20"></div>
+      <div class="modal-field"><label>Scoring Type</label>
+        <select id="ms-scoring-type">
+          <option value="league" selected>League Default</option>
+          <option value="ppr">PPR (1 pt/rec)</option>
+          <option value="half">Half-PPR (0.5 pt/rec)</option>
+          <option value="std">Standard (0 pt/rec)</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-section-title">Offense</div>
+    <div class="modal-scoring-grid">
+      <div class="modal-field"><label>Pass YD (pt/yd)</label><input type="number" id="sc-pass_yd" value="0.02" step="0.01"></div>
+      <div class="modal-field"><label>Pass TD</label><input type="number" id="sc-pass_td" value="6" step="1"></div>
+      <div class="modal-field"><label>INT Thrown</label><input type="number" id="sc-pass_int" value="-2" step="1"></div>
+      <div class="modal-field"><label>350+ Pass YD Bonus</label><input type="number" id="sc-bonus_pass_350" value="5" step="1"></div>
+      <div class="modal-field"><label>450+ Pass YD Bonus</label><input type="number" id="sc-bonus_pass_450" value="10" step="1"></div>
+      <div class="modal-field"><label>Pick Six Thrown</label><input type="number" id="sc-pick_six" value="-4" step="1"></div>
+      <div class="modal-field"><label>Rush YD (pt/yd)</label><input type="number" id="sc-rush_yd" value="0.05" step="0.01"></div>
+      <div class="modal-field"><label>Rush TD</label><input type="number" id="sc-rush_td" value="6" step="1"></div>
+      <div class="modal-field"><label>150+ Rush YD Bonus</label><input type="number" id="sc-bonus_rush_150" value="5" step="1"></div>
+      <div class="modal-field"><label>250+ Rush YD Bonus</label><input type="number" id="sc-bonus_rush_250" value="10" step="1"></div>
+      <div class="modal-field"><label>Reception</label><input type="number" id="sc-rec" value="1" step="0.5"></div>
+      <div class="modal-field"><label>Rec YD (pt/yd)</label><input type="number" id="sc-rec_yd" value="0.05" step="0.01"></div>
+      <div class="modal-field"><label>Rec TD</label><input type="number" id="sc-rec_td" value="6" step="1"></div>
+      <div class="modal-field"><label>150+ Rec YD Bonus</label><input type="number" id="sc-bonus_rec_150" value="5" step="1"></div>
+      <div class="modal-field"><label>200+ Rec YD Bonus</label><input type="number" id="sc-bonus_rec_200" value="5" step="1"></div>
+      <div class="modal-field"><label>250+ Rec YD Bonus</label><input type="number" id="sc-bonus_rec_250" value="10" step="1"></div>
+      <div class="modal-field"><label>Return TD</label><input type="number" id="sc-ret_td" value="6" step="1"></div>
+      <div class="modal-field"><label>2-Pt Conversion</label><input type="number" id="sc-two_pt" value="2" step="1"></div>
+      <div class="modal-field"><label>Fumble Lost</label><input type="number" id="sc-fum_lost" value="-2" step="1"></div>
+      <div class="modal-field"><label>Off. Fumble Ret TD</label><input type="number" id="sc-fum_rec_td" value="6" step="1"></div>
+    </div>
+    <div class="modal-section-title">Kickers</div>
+    <div class="modal-scoring-grid">
+      <div class="modal-field"><label>FG 0-19 yd</label><input type="number" id="sc-fg_0_19" value="3" step="1"></div>
+      <div class="modal-field"><label>FG 20-29 yd</label><input type="number" id="sc-fg_20_29" value="3" step="1"></div>
+      <div class="modal-field"><label>FG 30-39 yd</label><input type="number" id="sc-fg_30_39" value="3" step="1"></div>
+      <div class="modal-field"><label>FG 40-49 yd</label><input type="number" id="sc-fg_40_49" value="4" step="1"></div>
+      <div class="modal-field"><label>FG 50+ yd</label><input type="number" id="sc-fg_50p" value="5" step="1"></div>
+      <div class="modal-field"><label>FG Miss 0-19 yd</label><input type="number" id="sc-fgmiss_0_19" value="-5" step="1"></div>
+      <div class="modal-field"><label>FG Miss 20-29 yd</label><input type="number" id="sc-fgmiss_20_29" value="-4" step="1"></div>
+      <div class="modal-field"><label>FG Miss 30-39 yd</label><input type="number" id="sc-fgmiss_30_39" value="-3" step="1"></div>
+      <div class="modal-field"><label>FG Miss 40-49 yd</label><input type="number" id="sc-fgmiss_40_49" value="-2" step="1"></div>
+      <div class="modal-field"><label>XP Made</label><input type="number" id="sc-xpt" value="2" step="1"></div>
+      <div class="modal-field"><label>XP Missed</label><input type="number" id="sc-xpmiss" value="-2" step="1"></div>
+    </div>
+    <div class="modal-section-title">Defense / Special Teams</div>
+    <div class="modal-scoring-grid">
+      <div class="modal-field"><label>Sack</label><input type="number" id="sc-sack" value="1" step="1"></div>
+      <div class="modal-field"><label>Interception</label><input type="number" id="sc-def_int" value="2" step="1"></div>
+      <div class="modal-field"><label>Fumble Recovery</label><input type="number" id="sc-def_fum_rec" value="2" step="1"></div>
+      <div class="modal-field"><label>Defensive TD</label><input type="number" id="sc-def_td" value="6" step="1"></div>
+      <div class="modal-field"><label>Safety</label><input type="number" id="sc-def_safety" value="2" step="1"></div>
+      <div class="modal-field"><label>Blocked Kick</label><input type="number" id="sc-def_blk" value="2" step="1"></div>
+      <div class="modal-field"><label>KO/Punt Return TD</label><input type="number" id="sc-def_ret_td" value="6" step="1"></div>
+      <div class="modal-field"><label>XP Returned</label><input type="number" id="sc-def_2pt_ret" value="2" step="1"></div>
+      <div class="modal-field"><label>Pts Allowed 0</label><input type="number" id="sc-pts_allow_0" value="10" step="1"></div>
+      <div class="modal-field"><label>Pts Allowed 1-6</label><input type="number" id="sc-pts_allow_1_6" value="7" step="1"></div>
+      <div class="modal-field"><label>Pts Allowed 7-13</label><input type="number" id="sc-pts_allow_7_13" value="4" step="1"></div>
+      <div class="modal-field"><label>Pts Allowed 14-20</label><input type="number" id="sc-pts_allow_14_20" value="1" step="1"></div>
+      <div class="modal-field"><label>Pts Allowed 21-27</label><input type="number" id="sc-pts_allow_21_27" value="0" step="1"></div>
+      <div class="modal-field"><label>Pts Allowed 28-34</label><input type="number" id="sc-pts_allow_28_34" value="-1" step="1"></div>
+      <div class="modal-field"><label>Pts Allowed 35+</label><input type="number" id="sc-pts_allow_35p" value="-4" step="1"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" style="margin-right:auto" onclick="resetLeagueScoring()">↺ League Defaults</button>
+      <button class="btn btn-outline" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Apply Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- Header -->
+<header>
+  <button class="btn btn-outline menu-btn" onclick="toggleSidebar()" title="League info & queue">☰</button>
+  <div>🏈</div>
+  <h1>Killabeez Fantasy Draft Assistant</h1>
+  <div class="tagline">created by Larry Flores</div>
+  <div class="spacer"></div>
+  <div id="data-status" style="font-size:11px;color:var(--muted)">Loading…</div>
+  <button class="btn btn-outline" onclick="openSettings()">⚙️ Settings</button>
+  <div class="view-tabs">
+    <button class="view-tab active" id="view-players" onclick="setView('players')">📋 Players</button>
+    <button class="view-tab" id="view-board" onclick="setView('board')">📊 Draft Board</button>
+    <button class="view-tab" id="view-log" onclick="setView('log')">📜 Pick Log</button>
+    <button class="view-tab" id="view-teams" onclick="setView('teams')">👥 Teams</button>
+  </div>
+  <button class="btn btn-primary" id="start-draft-btn" onclick="openDraftSetup()">🏈 Start Draft</button>
+  <button class="btn btn-danger hidden" id="end-draft-btn" onclick="endDraft()">⏹ End Draft</button>
+  <button class="btn btn-ai" id="ai-toggle-btn" onclick="toggleAIPanel()">🤖 AI Advisor</button>
+</header>
+
+<div class="error-banner hidden" id="error-banner"></div>
+<div class="draft-bar hidden" id="draft-bar"></div>
+
+<div class="app-body">
+  <!-- Left Sidebar -->
+  <aside class="sidebar">
+    <button class="sidebar-close" onclick="toggleSidebar()">✕ Close</button>
+    <div class="sidebar-section">
+      <h3>League</h3>
+      <div class="setting-row"><label>Teams</label><span id="sb-teams" style="font-weight:700">12</span></div>
+      <div class="setting-row"><label>Rounds</label><span id="sb-rounds" style="font-weight:700">15</span></div>
+      <div class="setting-row"><label>Scoring</label><span id="sb-scoring" style="font-weight:700">League</span></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Available by Position</h3>
+      <div id="pos-counts" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:12px;"></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Draft Progress</h3>
+      <div id="draft-progress" style="font-size:12px;color:var(--muted)">0 players drafted</div>
+    </div>
+    <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+      <h3>My Queue <span id="queue-count" style="color:var(--muted)">(0)</span></h3>
+      <div class="queue-list" id="queue-list">
+        <div class="queue-empty">Star ☆ players to queue them</div>
+      </div>
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" onclick="toggleSidebar()"></div>
+
+  <!-- Main board -->
+  <div class="main-panel">
+    <div class="toolbar">
+      <div class="pos-tabs">
+        <button class="pos-tab active" data-pos="ALL">ALL</button>
+        <button class="pos-tab" data-pos="QB">QB</button>
+        <button class="pos-tab" data-pos="RB">RB</button>
+        <button class="pos-tab" data-pos="WR">WR</button>
+        <button class="pos-tab" data-pos="TE">TE</button>
+        <button class="pos-tab" data-pos="K">K</button>
+        <button class="pos-tab" data-pos="DEF">DEF</button>
+      </div>
+      <input class="search-box" id="search-box" type="text" placeholder="Search player or team…">
+      <div class="toolbar-right">
+        <label class="show-drafted-label"><input type="checkbox" id="show-drafted" onchange="render()"> Show drafted</label>
+        <span style="font-size:11px;color:var(--muted)" id="visible-count"></span>
+      </div>
+    </div>
+
+    <div id="player-view" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+    <div class="table-wrap">
+      <table id="player-table">
+        <thead>
+          <tr>
+            <th style="width:36px" onclick="sortBy('rank')" class="sorted" data-col="rank">Rank<span class="sort-arrow">↑</span></th>
+            <th onclick="sortBy('name')" data-col="name">Player</th>
+            <th onclick="sortBy('pos')" data-col="pos">POS</th>
+            <th onclick="sortBy('team')" data-col="team">Team</th>
+            <th onclick="sortBy('bye')" data-col="bye">Bye</th>
+            <th onclick="sortBy('status')" data-col="status">Status</th>
+            <th onclick="sortBy('depth')" data-col="depth">Depth</th>
+            <th onclick="sortBy('adp')" data-col="adp" title="Average Draft Position (expert consensus)">ADP</th>
+            <th onclick="sortBy('pts')" data-col="pts">2025 Pts</th>
+            <th style="width:140px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="player-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="stats-bar">
+      <div>Players: <span id="stat-total">—</span></div>
+      <div>Drafted: <span id="stat-drafted">0</span></div>
+      <div>Available: <span id="stat-available">—</span></div>
+      <div style="margin-left:auto;color:var(--muted)">
+        <span class="inj-badge inj-Q">Q</span> Questionable &nbsp;
+        <span class="inj-badge inj-D">D</span> Doubtful &nbsp;
+        <span class="inj-badge inj-O">O</span> Out &nbsp;
+        <span class="inj-badge inj-IR">IR</span> Injured Reserve
+      </div>
+    </div>
+    </div><!-- /player-view -->
+    <div id="board-view" class="view-hidden" style="flex:1;overflow:auto;padding:10px;"></div>
+    <div id="log-view" class="view-hidden" style="flex:1;overflow:hidden;display:flex;flex-direction:column;"></div>
+    <div id="teams-view" class="view-hidden" style="flex:1;overflow-y:auto;padding:12px;"></div>
+  </div>
+
+  <!-- AI Panel -->
+  <div class="ai-panel collapsed" id="ai-panel">
+    <div class="ai-header">
+      <span style="font-size:18px">🤖</span>
+      <h3>AI Draft Advisor</h3>
+      <select id="ai-model-select" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;" title="Claude model">
+        <option value="claude-haiku-4-5-20251001">Haiku (fast)</option>
+        <option value="claude-sonnet-4-6" selected>Sonnet (recommended)</option>
+        <option value="claude-opus-4-6">Opus (most capable)</option>
+      </select>
+    </div>
+
+    <!-- API key -->
+    <div class="ai-key-section">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Anthropic API Key</div>
+      <div class="ai-key-row">
+        <input class="ai-key-input" id="api-key-input" type="password" placeholder="sk-ant-…">
+        <button class="btn-set-key" onclick="setApiKey()">Set Key</button>
+      </div>
+      <div class="key-status" id="key-status">Enter your key to enable AI analysis. Stored locally only.</div>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="ai-quick">
+      <button class="btn-quick" onclick="askBestPick()" id="btn-best-pick" disabled>🎯 Best Pick Now</button>
+      <button class="btn-quick" onclick="askTeamAnalysis()" id="btn-team" disabled>📊 My Team</button>
+      <button class="btn-quick" onclick="askByeWeeks()" id="btn-bye" disabled>📅 Bye Conflicts</button>
+      <button class="btn-quick" onclick="clearChat()">🗑 Clear</button>
+    </div>
+
+    <!-- Messages -->
+    <div class="ai-messages" id="ai-messages">
+      <div class="ai-welcome">
+        <div class="msg-label" style="font-size:10px;font-weight:700;color:var(--ai);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">AI Draft Advisor</div>
+        <p>Enter your <strong>Anthropic API key</strong> above to enable real-time AI analysis powered by Claude.</p>
+        <p style="margin-top:6px">I can help you:</p>
+        <ul style="padding-left:14px;margin-top:4px;color:var(--muted)">
+          <li>Recommend the best available pick</li>
+          <li>Analyze specific players vs. your roster</li>
+          <li>Flag injury & bye week conflicts</li>
+          <li>Answer any draft strategy question</li>
+        </ul>
+      </div>
+      <div class="ai-thinking hidden" id="ai-thinking">
+        <div class="spinner spinner-ai" style="width:16px;height:16px;border-width:2px"></div>
+        <span id="thinking-msg">Analyzing draft situation…</span>
+        <div class="dot-anim"><span></span><span></span><span></span></div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div class="ai-input-row">
+      <textarea class="ai-input" id="ai-input" placeholder="Ask anything about your draft…" onkeydown="handleAIKey(event)"></textarea>
+      <button class="btn-send" id="btn-send" onclick="sendAIMessage()" disabled>↑</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════
+const state = {
+  players: [],
+  stats: {},
+  drafted: new Set(),   // my drafted player ids
+  myTeam: [],           // ordered list of my picks [{id, round, pick}]
+  otherDrafted: new Set(), // ids drafted by others (future: mock draft)
+  queue: [],
+  filter: { pos: 'ALL', search: '' },
+  sort: { col: 'rank', dir: 1 },
+  leagueSettings: {
+    teams: 12, rounds: 15, scoringType: 'league',
+    scoring: null, // set below from LEAGUE_SCORING
+  },
+  ai: { apiKey: '', panelOpen: false, busy: false }
+};
+
+// League default scoring values
+const LEAGUE_SCORING = {
+  // Offense
+  pass_yd: 0.02, pass_td: 6, pass_int: -2,
+  bonus_pass_350: 5, bonus_pass_450: 10, pick_six: -4,
+  rush_yd: 0.05, rush_td: 6, bonus_rush_150: 5, bonus_rush_250: 10,
+  rec: 1, rec_yd: 0.05, rec_td: 6,
+  bonus_rec_150: 5, bonus_rec_200: 5, bonus_rec_250: 10,
+  ret_td: 6, two_pt: 2, fum_lost: -2, fum_rec_td: 6,
+  // Kickers
+  fg_0_19: 3, fg_20_29: 3, fg_30_39: 3, fg_40_49: 4, fg_50p: 5,
+  fgmiss_0_19: -5, fgmiss_20_29: -4, fgmiss_30_39: -3, fgmiss_40_49: -2,
+  xpt: 2, xpmiss: -2,
+  // Defense / Special Teams
+  sack: 1, def_int: 2, def_fum_rec: 2, def_td: 6, def_safety: 2,
+  def_blk: 2, def_ret_td: 6, def_2pt_ret: 2,
+  pts_allow_0: 10, pts_allow_1_6: 7, pts_allow_7_13: 4, pts_allow_14_20: 1,
+  pts_allow_21_27: 0, pts_allow_28_34: -1, pts_allow_35p: -4,
+};
+const SCORING_FIELDS = Object.keys(LEAGUE_SCORING);
+state.leagueSettings.scoring = { ...LEAGUE_SCORING };
+
+const POSITIONS = ['QB','RB','WR','TE','K','DEF'];
+
+// ═══════════════════════════════════════════════════════════
+//  DATA LOADING
+// ═══════════════════════════════════════════════════════════
+function adpFormat() {
+  // Pick the ADP dataset closest to the league's reception scoring
+  const t = state.leagueSettings.scoringType;
+  const rec = state.leagueSettings.scoring.rec;
+  if (t === 'half' || (t !== 'ppr' && t !== 'std' && rec === 0.5)) return 'half-ppr';
+  if (t === 'std'  || rec === 0) return 'standard';
+  return 'ppr';
+}
+
+async function fetchAdpJson() {
+  const year = new Date().getFullYear();
+  const url = `https://fantasyfootballcalculator.com/api/v1/adp/${adpFormat()}?teams=${state.leagueSettings.teams}&year=${year}`;
+  // Direct fetch first; if blocked (e.g. CORS), retry through public CORS proxies
+  const attempts = [
+    url,
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+    'https://corsproxy.io/?url=' + encodeURIComponent(url),
+  ];
+  for (const u of attempts) {
+    try {
+      const r = await fetch(u);
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (j && Array.isArray(j.players) && j.players.length) return j;
+    } catch {}
+  }
+  return null;
+}
+
+async function loadData() {
+  setLoading('Loading player data…');
+  try {
+    const year = new Date().getFullYear();
+    const [playersRes, statsRes, adpRes] = await Promise.allSettled([
+      fetch('https://api.sleeper.app/v1/players/nfl').then(r => r.json()),
+      fetch('https://api.sleeper.app/v1/stats/nfl/regular/2025').then(r => r.json()),
+      fetchAdpJson()
+    ]);
+    if (playersRes.status === 'rejected') throw new Error('Could not load players.');
+    const rawPlayers = playersRes.value;
+    state.stats = statsRes.status === 'fulfilled' ? statsRes.value : {};
+    buildAdpIndex(adpRes.status === 'fulfilled' ? adpRes.value : null);
+    setLoading('Processing players…');
+    processPlayers(rawPlayers);
+    hideLoading();
+    const statsOk = statsRes.status === 'fulfilled';
+    const adpOk = state.adpCount > 0;
+    document.getElementById('data-status').textContent =
+      `${state.players.length.toLocaleString()} players · ${year} ADP ${adpOk ? `✓ (${state.adpCount})` : '✗'} · 2025 stats ${statsOk ? '✓' : '(n/a)'}`;
+    if (!adpOk) showError('⚠ Expert ADP data could not be loaded — rankings are falling back to 2025 stats and will not match expert draft boards. Check your internet connection and reload.');
+    render();
+  } catch(err) {
+    hideLoading();
+    showError('Failed to load: ' + err.message);
+  }
+}
+
+// ── ADP (expert consensus draft position) from Fantasy Football Calculator ──
+const TEAM_ALIASES = { JAC:'JAX', WSH:'WAS', ARZ:'ARI', BLT:'BAL', CLV:'CLE', HST:'HOU', LA:'LAR', SD:'LAC', OAK:'LV', STL:'LAR' };
+function normTeam(t) { t = (t||'').toUpperCase(); return TEAM_ALIASES[t] || t; }
+function normName(n) {
+  return (n||'').toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, '')
+    .replace(/[^a-z]/g, '');
+}
+
+function buildAdpIndex(json) {
+  state.adpIndex = {};   // "POS:normname" (or "DEF:TEAM") → adp
+  state.adpCount = 0;
+  const players = json && Array.isArray(json.players) ? json.players : null;
+  if (!players) return;
+  players.forEach(a => {
+    const adp = parseFloat(a.adp);
+    if (!adp) return;
+    let pos = (a.position||'').toUpperCase();
+    if (pos === 'PK') pos = 'K';
+    if (!POSITIONS.includes(pos)) return;
+    const key = pos === 'DEF' ? `DEF:${normTeam(a.team)}` : `${pos}:${normName(a.name)}`;
+    if (state.adpIndex[key] == null) state.adpCount++;
+    if (state.adpIndex[key] == null || adp < state.adpIndex[key]) state.adpIndex[key] = adp;
+  });
+}
+
+function lookupAdp(p) {
+  if (!state.adpIndex) return null;
+  const key = p.pos === 'DEF' ? `DEF:${normTeam(p.team)}` : `${p.pos}:${normName(p.name)}`;
+  return state.adpIndex[key] ?? null;
+}
+
+function processPlayers(raw) {
+  const list = [];
+  for (const [id, p] of Object.entries(raw)) {
+    const pos = p.fantasy_positions?.[0] || p.position;
+    if (!POSITIONS.includes(pos)) continue;
+    if (!p.active) continue;
+    if (!p.team && pos !== 'DEF') continue;
+    const depth = p.depth_chart_order || 99;
+    list.push({
+      id, pos,
+      name: p.full_name || p.search_full_name || p.last_name || id,
+      firstName: p.first_name || '',
+      lastName: p.last_name || '',
+      team: p.team || pos,
+      bye: p.bye_week || null,
+      injuryStatus: p.injury_status || null,
+      injuryNotes: p.injury_notes || '',
+      depth, pts: null, rankVal: 0, age: p.age || null,
+      exp: typeof p.years_exp === 'number' ? p.years_exp : null,
+    });
+  }
+  state.players = list;
+  recomputeRankings();
+}
+
+function computePoints(pos, st) {
+  const s = state.leagueSettings.scoring;
+  const type = state.leagueSettings.scoringType;
+  if (pos === 'K') {
+    // Made FGs by distance
+    let pts = (st.fgm_0_19||0)*s.fg_0_19 + (st.fgm_20_29||0)*s.fg_20_29 + (st.fgm_30_39||0)*s.fg_30_39
+            + (st.fgm_40_49||0)*s.fg_40_49 + (st.fgm_50p||0)*s.fg_50p;
+    // Missed FGs by distance (fall back to total misses at the 40-49 penalty if buckets unavailable)
+    const missKeys = ['fgmiss_0_19','fgmiss_20_29','fgmiss_30_39','fgmiss_40_49'];
+    if (missKeys.some(k => st[k] != null)) {
+      pts += (st.fgmiss_0_19||0)*s.fgmiss_0_19 + (st.fgmiss_20_29||0)*s.fgmiss_20_29
+           + (st.fgmiss_30_39||0)*s.fgmiss_30_39 + (st.fgmiss_40_49||0)*s.fgmiss_40_49;
+    } else if (st.fgmiss) {
+      pts += st.fgmiss * s.fgmiss_40_49;
+    }
+    pts += (st.xpm||0)*s.xpt + (st.xpmiss||0)*s.xpmiss;
+    return pts;
+  }
+  if (pos === 'DEF') {
+    return (st.sack||0)*s.sack + (st.int||0)*s.def_int + (st.fum_rec||0)*s.def_fum_rec
+         + (st.def_td||st.td||0)*s.def_td + (st.safe||st.safety||0)*s.def_safety
+         + (st.blk_kick||0)*s.def_blk + (st.def_st_td||st.st_td||0)*s.def_ret_td
+         + (st.def_2pt||0)*s.def_2pt_ret
+         + (st.pts_allow_0||0)*s.pts_allow_0 + (st.pts_allow_1_6||0)*s.pts_allow_1_6
+         + (st.pts_allow_7_13||0)*s.pts_allow_7_13 + (st.pts_allow_14_20||0)*s.pts_allow_14_20
+         + (st.pts_allow_21_27||0)*s.pts_allow_21_27 + (st.pts_allow_28_34||0)*s.pts_allow_28_34
+         + (st.pts_allow_35p||0)*s.pts_allow_35p;
+  }
+  // Offense — reception value can be overridden by simple scoring types
+  const rec = type === 'ppr' ? 1 : type === 'half' ? 0.5 : type === 'std' ? 0 : s.rec;
+  return (st.pass_yd||0)*s.pass_yd + (st.pass_td||0)*s.pass_td + (st.pass_int||0)*s.pass_int
+       + (st.rush_yd||0)*s.rush_yd + (st.rush_td||0)*s.rush_td
+       + (st.rec||0)*(pos==='QB'?0:rec) + (st.rec_yd||0)*s.rec_yd + (st.rec_td||0)*s.rec_td
+       + (st.fum_lost||0)*s.fum_lost
+       + ((st.pass_2pt||0)+(st.rush_2pt||0)+(st.rec_2pt||0))*s.two_pt
+       + (st.st_td||0)*s.ret_td + (st.fum_rec_td||0)*s.fum_rec_td;
+  // Note: per-game yardage bonuses (350+ pass, 150+ rush, etc.) can't be derived
+  // from season-total stats, so they aren't included in historical point totals.
+}
+
+function recomputeRankings() {
+  // 1) Raw fantasy points from 2025 season stats
+  state.players.forEach(p => {
+    const st = state.stats[p.id] || {};
+    const pts = computePoints(p.pos, st);
+    p.pts = pts > 0 ? pts : null;
+  });
+
+  // 2) Per-position point curves from players with real stats
+  const byPos = {};
+  POSITIONS.forEach(pos => {
+    byPos[pos] = state.players.filter(p => p.pos === pos && p.pts != null)
+                              .map(p => p.pts).sort((a,b) => b - a);
+  });
+
+  // 3) Replacement level: points of the last starter-quality player at each
+  //    position given league size (how deep the position gets drafted)
+  const teams = state.leagueSettings.teams;
+  const replDepth = {
+    QB: Math.round(teams * 1.3), RB: Math.round(teams * 2.8),
+    WR: Math.round(teams * 3.0), TE: Math.round(teams * 1.3),
+    K: teams, DEF: teams,
+  };
+  const repl = {};
+  POSITIONS.forEach(pos => {
+    const arr = byPos[pos];
+    repl[pos] = arr.length ? arr[Math.min(replDepth[pos], arr.length - 1)] : 0;
+  });
+
+  // 4) Projection: real points if available; otherwise a conservative
+  //    depth-chart-based fraction of the position's top scorer (rookies /
+  //    unproven players should never outrank proven producers)
+  state.players.forEach(p => {
+    let proj = p.pts;
+    if (proj == null) {
+      const top = byPos[p.pos][0] || 100;
+      const df = p.depth === 1 ? 0.5 : p.depth === 2 ? 0.2 : 0.05;
+      proj = top * df;
+    }
+    p.proj = proj;
+    let vbd = proj - repl[p.pos];
+    // K/DEF are weekly-streamable — heavy discount so raw season totals
+    // (inflated by sacks/points-allowed tiers) can never top the board
+    if (p.pos === 'K' || p.pos === 'DEF') vbd = vbd * 0.3 - 100;
+    // 5) Primary ranking: expert-consensus ADP (average draft position from
+    //    real mock drafts). Players with an ADP always rank above players
+    //    without one; among the rest, fall back to value-over-replacement.
+    p.adp = lookupAdp(p);
+    p.rankVal = p.adp != null ? 100000 - p.adp * 100 : vbd;
+  });
+
+  state.players.sort((a,b) => b.rankVal - a.rankVal);
+  state.players.forEach((p,i) => { p.rank = i+1; });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RENDERING
+// ═══════════════════════════════════════════════════════════
+function render() {
+  const showDrafted = document.getElementById('show-drafted').checked;
+  const search = document.getElementById('search-box').value.toLowerCase();
+  const filterPos = state.filter.pos;
+
+  let list = state.players.filter(p => {
+    if (!showDrafted && state.drafted.has(p.id)) return false;
+    if (filterPos !== 'ALL' && p.pos !== filterPos) return false;
+    if (search) {
+      if (!(p.name+' '+p.team+' '+p.pos).toLowerCase().includes(search)) return false;
+    }
+    return true;
+  });
+
+  list = sortList(list);
+  let rc = 0;
+  list.forEach(p => { p.visRank = state.drafted.has(p.id) ? null : ++rc; });
+
+  document.getElementById('player-tbody').innerHTML = list.map(p => playerRow(p)).join('');
+
+  const total = state.players.length;
+  const drafted = state.drafted.size;
+  document.getElementById('stat-total').textContent = total.toLocaleString();
+  document.getElementById('stat-drafted').textContent = drafted;
+  document.getElementById('stat-available').textContent = (total - drafted).toLocaleString();
+  document.getElementById('visible-count').textContent = `${list.length} shown`;
+  updateSidebar();
+}
+
+function playerRow(p) {
+  const drafted = state.drafted.has(p.id);
+  const inQueue = state.queue.includes(p.id);
+  const inj = p.injuryStatus;
+
+  const injBadge = inj
+    ? `<span class="inj-badge inj-${inj.charAt(0)}" title="${p.injuryNotes||inj}">${inj}</span>`
+    : `<span style="color:var(--muted);font-size:10px">Healthy</span>`;
+
+  const depthLabel = p.depth===1?`<span class="depth-1">Starter</span>`
+                   : p.depth===2?`<span class="depth-2">2nd</span>`
+                   : p.depth<99 ?`<span class="depth-3">${p.depth}rd</span>`
+                   :              `<span class="depth-3">—</span>`;
+
+  const bye = p.bye
+    ? `<span class="bye-badge ${p.bye<=5?'bye-early':p.bye>=14?'bye-late':''}" title="Bye week ${p.bye}">Wk ${p.bye}</span>`
+    : `<span style="color:var(--muted);font-size:11px">—</span>`;
+
+  const pts = p.pts!=null
+    ? `<strong>${p.pts.toFixed(1)}</strong>`
+    : `<span style="color:var(--muted);font-size:10px">N/A</span>`;
+
+  const adp = p.adp!=null
+    ? `<strong>${p.adp.toFixed(1)}</strong>`
+    : `<span style="color:var(--muted);font-size:10px">—</span>`;
+
+  const aiBtn = state.ai.apiKey
+    ? `<button class="btn-analyze" onclick="analyzePlayer('${p.id}')" title="AI analysis">🤖</button>`
+    : '';
+
+  const actions = drafted
+    ? `<div class="action-cell"><button class="btn-undraft" onclick="undraft('${p.id}')">↩ Undo</button></div>`
+    : `<div class="action-cell">
+        <button class="btn-queue ${inQueue?'queued':''}" onclick="toggleQueue('${p.id}')" title="${inQueue?'Remove from queue':'Add to queue'}">${inQueue?'★':'☆'}</button>
+        <button class="btn-draft" onclick="draftPlayer('${p.id}')">Draft</button>
+        ${aiBtn}
+       </div>`;
+
+  return `<tr class="${drafted?'drafted':''} ${inQueue&&!drafted?'in-queue':''}" id="row-${p.id}">
+    <td class="rank">${p.visRank||'—'}</td>
+    <td>
+      <div class="player-name">${p.name}</div>
+      <div class="player-info">${p.age?`Age ${p.age}`:''}${p.exp!=null?` · Yr ${p.exp+1}`:''}</div>
+    </td>
+    <td><span class="pos-badge pos-${p.pos}">${p.pos}</span></td>
+    <td><strong>${p.team}</strong></td>
+    <td>${bye}</td>
+    <td>${injBadge}</td>
+    <td>${depthLabel}</td>
+    <td>${adp}</td>
+    <td>${pts}</td>
+    <td>${actions}</td>
+  </tr>`;
+}
+
+function sortList(list) {
+  const {col,dir} = state.sort;
+  return [...list].sort((a,b) => {
+    if (col==='rank') return (b.rankVal - a.rankVal)*dir;
+    if (col==='name') return a.name.localeCompare(b.name)*dir;
+    if (col==='pos')  return a.pos.localeCompare(b.pos)*dir;
+    if (col==='team') return (a.team||'').localeCompare(b.team||'')*dir;
+    if (col==='bye')  return ((a.bye||99)-(b.bye||99))*dir;
+    if (col==='depth')return ((a.depth||99)-(b.depth||99))*dir;
+    if (col==='adp')  return ((a.adp??999)-(b.adp??999))*dir;
+    if (col==='pts')  return ((b.pts||0)-(a.pts||0))*dir;
+    if (col==='status') {
+      const o = {'IR':4,'PUP':3,'Out':2,'Doubtful':1,'Questionable':0};
+      return ((o[b.injuryStatus]??-1)-(o[a.injuryStatus]??-1))*dir;
+    }
+    return 0;
+  });
+}
+
+function updateSidebar() {
+  const counts = {};
+  POSITIONS.forEach(p => counts[p] = 0);
+  state.players.forEach(p => { if (!state.drafted.has(p.id)) counts[p.pos] = (counts[p.pos]||0)+1; });
+  document.getElementById('pos-counts').innerHTML = POSITIONS.map(p =>
+    `<div><span style="color:var(--muted)">${p}</span></div><div><strong>${counts[p]||0}</strong></div>`
+  ).join('');
+
+  const drafted = state.drafted.size;
+  const total = state.leagueSettings.teams * state.leagueSettings.rounds;
+  document.getElementById('draft-progress').innerHTML =
+    `<div style="margin-bottom:5px">${drafted} / ${total} picks made</div>
+     <div style="background:var(--border);border-radius:3px;height:4px;overflow:hidden">
+       <div style="background:var(--accent);height:100%;width:${Math.min(100,(drafted/total)*100)}%;transition:width .3s"></div>
+     </div>`;
+
+  document.getElementById('sb-teams').textContent = state.leagueSettings.teams;
+  document.getElementById('sb-rounds').textContent = state.leagueSettings.rounds;
+  document.getElementById('sb-scoring').textContent = {league:'League',ppr:'PPR',half:'Half-PPR',std:'Standard',custom:'Custom'}[state.leagueSettings.scoringType];
+
+  const queueList = document.getElementById('queue-list');
+  document.getElementById('queue-count').textContent = `(${state.queue.length})`;
+  if (!state.queue.length) {
+    queueList.innerHTML = '<div class="queue-empty">Star ☆ players to queue them</div>';
+  } else {
+    const pm = Object.fromEntries(state.players.map(p=>[p.id,p]));
+    queueList.innerHTML = state.queue.map((id,i) => {
+      const p = pm[id]; if (!p) return '';
+      const dr = state.drafted.has(id);
+      return `<div class="queue-item ${dr?'drafted':''}">
+        <span style="color:var(--muted);font-size:11px;width:14px">${i+1}</span>
+        <span class="pos-badge pos-${p.pos}" style="font-size:9px;padding:1px 5px">${p.pos}</span>
+        <span class="q-name" style="${dr?'text-decoration:line-through':''}">${p.name}</span>
+        <span style="color:var(--muted);font-size:10px">${p.team}</span>
+        <button class="q-remove" onclick="toggleQueue('${id}')">×</button>
+      </div>`;
+    }).join('');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DRAFT ACTIONS
+// ═══════════════════════════════════════════════════════════
+function draftPlayer(id) {
+  const round = Math.floor(state.myTeam.length / 1) + 1; // simplify: each pick is next pick
+  state.drafted.add(id);
+  state.myTeam.push({ id, pick: state.myTeam.length + 1 });
+  state.queue = state.queue.filter(q => q !== id);
+  render();
+}
+
+function undraft(id) {
+  state.drafted.delete(id);
+  state.myTeam = state.myTeam.filter(t => t.id !== id);
+  render();
+}
+
+function toggleQueue(id) {
+  const idx = state.queue.indexOf(id);
+  idx === -1 ? state.queue.push(id) : state.queue.splice(idx, 1);
+  render();
+}
+
+function resetDraft() {
+  if (!state.drafted.size && !state.queue.length) return;
+  if (!confirm('Reset the entire draft?')) return;
+  state.drafted.clear();
+  state.myTeam = [];
+  state.queue = [];
+  render();
+}
+
+function sortBy(col) {
+  state.sort.dir = (state.sort.col === col) ? state.sort.dir * -1 : 1;
+  state.sort.col = col;
+  document.querySelectorAll('thead th').forEach(th => {
+    th.classList.remove('sorted');
+    const a = th.querySelector('.sort-arrow');
+    if (a) a.textContent = '↑';
+  });
+  const th = document.querySelector(`thead th[data-col="${col}"]`);
+  if (th) {
+    th.classList.add('sorted');
+    const a = th.querySelector('.sort-arrow');
+    if (a) a.textContent = state.sort.dir === 1 ? '↑' : '↓';
+  }
+  render();
+}
+
+// SETTINGS
+function openSettings() {
+  populateSettingsForm();
+  document.getElementById('settings-modal').classList.remove('hidden');
+}
+function closeSettings() { document.getElementById('settings-modal').classList.add('hidden'); }
+
+function populateSettingsForm() {
+  document.getElementById('ms-teams').value = state.leagueSettings.teams;
+  document.getElementById('ms-rounds').value = state.leagueSettings.rounds;
+  document.getElementById('ms-scoring-type').value = state.leagueSettings.scoringType;
+  SCORING_FIELDS.forEach(f => {
+    const el = document.getElementById('sc-' + f);
+    if (el) el.value = state.leagueSettings.scoring[f];
+  });
+}
+
+function resetLeagueScoring() {
+  document.getElementById('ms-scoring-type').value = 'league';
+  SCORING_FIELDS.forEach(f => {
+    const el = document.getElementById('sc-' + f);
+    if (el) el.value = LEAGUE_SCORING[f];
+  });
+}
+
+function saveSettings() {
+  const type = document.getElementById('ms-scoring-type').value;
+  state.leagueSettings.teams = parseInt(document.getElementById('ms-teams').value);
+  state.leagueSettings.rounds = parseInt(document.getElementById('ms-rounds').value);
+  state.leagueSettings.scoringType = type;
+  SCORING_FIELDS.forEach(f => {
+    const el = document.getElementById('sc-' + f);
+    if (el) {
+      const v = parseFloat(el.value);
+      state.leagueSettings.scoring[f] = isNaN(v) ? 0 : v;
+    }
+  });
+  if (type === 'league') Object.assign(state.leagueSettings.scoring, { rec: LEAGUE_SCORING.rec });
+  if (type === 'ppr')  state.leagueSettings.scoring.rec = 1;
+  if (type === 'half') state.leagueSettings.scoring.rec = 0.5;
+  if (type === 'std')  state.leagueSettings.scoring.rec = 0;
+  closeSettings();
+  recomputeRankings();
+  render();
+  refreshAdp(); // scoring format / team count may change which ADP dataset applies
+}
+
+async function refreshAdp() {
+  const json = await fetchAdpJson();
+  if (!json) return; // keep whatever ADP we already have
+  buildAdpIndex(json);
+  recomputeRankings();
+  render();
+}
+
+// SIDEBAR
+function updateSidebar() {
+  const counts = {};
+  ['QB','RB','WR','TE','K','DEF'].forEach(p => counts[p] = 0);
+  state.players.forEach(p => { if (!state.drafted.has(p.id)) counts[p.pos] = (counts[p.pos] || 0) + 1; });
+  document.getElementById('pos-counts').innerHTML =
+    ['QB','RB','WR','TE','K','DEF'].map(p =>
+      `<div><span style="color:var(--muted)">${p}</span></div><div><strong>${counts[p] || 0}</strong></div>`
+    ).join('');
+
+  const drafted = state.drafted.size;
+  const total = state.leagueSettings.teams * state.leagueSettings.rounds;
+  const pct = Math.min(100, (drafted / total) * 100);
+  document.getElementById('draft-progress').innerHTML =
+    `<div style="margin-bottom:5px">${drafted} / ${total} picks made</div>
+     <div style="background:var(--border);border-radius:3px;height:4px;overflow:hidden">
+       <div style="background:var(--accent);height:100%;width:${pct}%;transition:width .3s"></div>
+     </div>`;
+
+  document.getElementById('sb-teams').textContent = state.leagueSettings.teams;
+  document.getElementById('sb-rounds').textContent = state.leagueSettings.rounds;
+  document.getElementById('sb-scoring').textContent =
+    { league:'League', ppr:'PPR', half:'Half-PPR', std:'Standard', custom:'Custom' }[state.leagueSettings.scoringType];
+
+  const queueList = document.getElementById('queue-list');
+  document.getElementById('queue-count').textContent = `(${state.queue.length})`;
+  if (!state.queue.length) {
+    queueList.innerHTML = '<div class="queue-empty">Star players to queue them</div>';
+  } else {
+    const pm = Object.fromEntries(state.players.map(p => [p.id, p]));
+    queueList.innerHTML = state.queue.map((id, i) => {
+      const p = pm[id]; if (!p) return '';
+      const dr = state.drafted.has(id);
+      return `<div class="queue-item ${dr ? 'drafted' : ''}">
+        <span style="color:var(--muted);font-size:11px;width:14px">${i + 1}</span>
+        <span class="pos-badge pos-${p.pos}" style="font-size:9px;padding:1px 5px">${p.pos}</span>
+        <span class="q-name" style="${dr ? 'text-decoration:line-through' : ''}">${p.name}</span>
+        <span style="color:var(--muted);font-size:10px">${p.team}</span>
+        <button class="q-remove" onclick="toggleQueue('${id}')">x</button>
+      </div>`;
+    }).join('');
+  }
+}
+
+// MOBILE SIDEBAR DRAWER
+function toggleSidebar() {
+  document.querySelector('.sidebar').classList.toggle('open');
+}
+
+// AI PANEL
+function toggleAIPanel() {
+  state.ai.panelOpen = !state.ai.panelOpen;
+  document.getElementById('ai-panel').classList.toggle('collapsed', !state.ai.panelOpen);
+  document.getElementById('ai-toggle-btn').classList.toggle('active', state.ai.panelOpen);
+}
+
+function setApiKey() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key.startsWith('sk-ant-')) {
+    document.getElementById('key-status').innerHTML = '<span class="key-bad">Key should start with sk-ant-</span>';
+    return;
+  }
+  state.ai.apiKey = key;
+  localStorage.setItem('ff_api_key', key);
+  document.getElementById('key-status').innerHTML = '<span class="key-ok">Key saved. AI analysis enabled.</span>';
+  document.getElementById('api-key-input').value = '●'.repeat(20);
+  enableAIButtons(true);
+  render();
+}
+
+function enableAIButtons(on) {
+  ['btn-best-pick','btn-team','btn-bye','btn-send'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !on;
+  });
+}
+
+function buildDraftContext() {
+  const ls = state.leagueSettings;
+  const scoringName = { league:'League scoring', ppr:'PPR (1pt/rec)', half:'Half-PPR (0.5pt/rec)', std:'Standard (0pt/rec)', custom:'Custom' }[ls.scoringType];
+  const pm = Object.fromEntries(state.players.map(p => [p.id, p]));
+
+  const myTeamStr = state.myTeam.length === 0
+    ? 'No picks yet (this is your first pick)'
+    : state.myTeam.map((t, i) => {
+        const p = pm[t.id]; if (!p) return '';
+        return `  Pick ${i+1}: ${p.name} (${p.pos}) - ${p.team}${p.injuryStatus ? ' [' + p.injuryStatus + ']' : ''}${p.bye ? ' Bye Wk ' + p.bye : ''}`;
+      }).filter(Boolean).join('\n');
+
+  const posCounts = {};
+  state.myTeam.forEach(t => { const p = pm[t.id]; if (p) posCounts[p.pos] = (posCounts[p.pos] || 0) + 1; });
+  const posSum = ['QB','RB','WR','TE','K','DEF'].map(pos => `${pos}:${posCounts[pos] || 0}`).join(' ');
+
+  const available = state.players
+    .filter(p => !state.drafted.has(p.id))
+    .slice(0, 30)
+    .map((p, i) => {
+      const inj = p.injuryStatus ? ` [${p.injuryStatus}]` : '';
+      const depth = p.depth === 1 ? 'Starter' : p.depth === 2 ? '2nd' : `Depth${p.depth}`;
+      const pts = p.pts != null ? ` ${p.pts.toFixed(0)}pts(2025)` : '';
+      const adp = p.adp != null ? ` ADP:${p.adp.toFixed(1)}` : '';
+      return `  ${i+1}. ${p.name} | ${p.pos} | ${p.team} | Bye${p.bye || '?'} | ${depth}${inj}${pts}${adp}`;
+    }).join('\n');
+
+  const sc = ls.scoring;
+  const scoringDetail = `PassYd=1/${Math.round(1/sc.pass_yd)}yd PassTD=${sc.pass_td} INT=${sc.pass_int} PickSix=${sc.pick_six} `
+    + `RushYd=1/${Math.round(1/sc.rush_yd)}yd RushTD=${sc.rush_td} Rec=${sc.rec} RecYd=1/${Math.round(1/sc.rec_yd)}yd RecTD=${sc.rec_td} `
+    + `FumLost=${sc.fum_lost} 2Pt=${sc.two_pt} RetTD=${sc.ret_td} | `
+    + `Big-game bonuses: Pass 350+=${sc.bonus_pass_350} 450+=${sc.bonus_pass_450}, Rush 150+=${sc.bonus_rush_150} 250+=${sc.bonus_rush_250}, `
+    + `Rec 150+=${sc.bonus_rec_150} 200+=${sc.bonus_rec_200} 250+=${sc.bonus_rec_250} | `
+    + `K: FG 0-39=${sc.fg_0_19} 40-49=${sc.fg_40_49} 50+=${sc.fg_50p}, Miss 0-19=${sc.fgmiss_0_19} 20-29=${sc.fgmiss_20_29} 30-39=${sc.fgmiss_30_39} 40-49=${sc.fgmiss_40_49}, XP=${sc.xpt}/${sc.xpmiss} | `
+    + `DEF: Sack=${sc.sack} INT=${sc.def_int} FumRec=${sc.def_fum_rec} TD=${sc.def_td} Safety=${sc.def_safety} Blk=${sc.def_blk} RetTD=${sc.def_ret_td}, `
+    + `PtsAllowed 0=${sc.pts_allow_0} 1-6=${sc.pts_allow_1_6} 7-13=${sc.pts_allow_7_13} 14-20=${sc.pts_allow_14_20} 21-27=${sc.pts_allow_21_27} 28-34=${sc.pts_allow_28_34} 35+=${sc.pts_allow_35p}`;
+
+  const curPick = state.draft && state.draft.started ? state.draft.currentPick : state.myTeam.length * ls.teams + 1;
+  const curRound = Math.min(ls.rounds, Math.ceil(curPick / ls.teams));
+  const adpNote = state.adpCount > 0
+    ? 'The list below is ordered by expert-consensus ADP — treat that order as the draft value baseline.'
+    : 'WARNING: expert ADP data is unavailable; the list is ordered by 2025 stat projections. Apply extra judgment — raw totals overvalue QB/K/DEF.';
+
+  return `League: ${ls.teams} teams, ${ls.rounds} rounds, ${scoringName}
+Scoring: ${scoringDetail}
+Draft progress: Round ${curRound} of ${ls.rounds} (overall pick ${curPick}). Reminder: K/DEF only in the final 2-3 rounds.
+My roster (my pick #${state.myTeam.length + 1}): ${posSum}
+${myTeamStr}
+
+${adpNote}
+Top 30 available (rank | name | pos | team | bye | depth | injury | 2025 pts | ADP):
+${available}
+
+Note: 2025 point totals are raw sums under league scoring and are NOT comparable across positions (K/DEF totals look inflated). ADP is the cross-position value signal.`;
+}
+
+async function streamClaude(sysPrompt, userPrompt, onChunk, onDone, onError) {
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': state.ai.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: (document.getElementById('ai-model-select')||{value:'claude-sonnet-4-6'}).value,
+        max_tokens: 1200,
+        stream: true,
+        system: sysPrompt,
+        messages: [{ role: 'user', content: userPrompt }]
+      })
+    });
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error(e.error?.message || `HTTP ${resp.status}`);
+    }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const d = line.slice(6).trim();
+        if (d === '[DONE]') { onDone(); return; }
+        try {
+          const evt = JSON.parse(d);
+          if (evt.type === 'content_block_delta' && evt.delta?.text) onChunk(evt.delta.text);
+          if (evt.type === 'message_stop') { onDone(); return; }
+        } catch {}
+      }
+    }
+    onDone();
+  } catch(e) { onError(e.message); }
+}
+
+const AI_SYSTEM = `You are an expert NFL fantasy football draft advisor. Give concise, specific, actionable advice during a live draft.
+
+DRAFT VALUE RULES (these override everything else):
+- The available-player list is ordered by expert consensus ADP (average draft position from thousands of real drafts). ADP is your primary signal of draft value. Your recommendation should normally come from the first few players listed; deviate only slightly, and only for roster fit, bye conflicts, or injury news.
+- Raw fantasy point totals are NOT comparable across positions. Kickers and defenses accumulate large raw totals, but their week-to-week edge over a waiver-wire replacement is tiny. NEVER recommend a K or DEF before the final 2-3 rounds of the draft, no matter what their point totals show.
+- Positional scarcity drives early drafting: elite RB/WR (and top TE) go in early rounds because the drop-off to replacement is steep. QBs last longer, even in 6-pt passing TD leagues.
+- A player's 2025 points reflect last season only — trust ADP for 2026 outlook (rookies, team changes, age decline).
+
+STYLE:
+- Lead with your clear recommendation, then explain why
+- Be specific: name players, cite stats, team situations, injury risk
+- Consider roster construction needs and bye weeks
+- Use **bold** for key names and bullet points for structure
+- Always give a backup pick in case your top choice is taken`;
+
+let streamBuffer = '';
+
+async function runAIQuery(userPrompt, thinkingLabel) {
+  if (!state.ai.apiKey) { addAIMessage('ai', 'Please set your Anthropic API key first.', true); return; }
+  if (state.ai.busy) return;
+  state.ai.busy = true;
+  streamBuffer = '';
+  setAIBusy(true, thinkingLabel || 'Analyzing draft situation...');
+  const msgEl = addStreamingMessage();
+  const ctx = buildDraftContext();
+  await streamClaude(
+    AI_SYSTEM,
+    ctx + '\n\n---\n\n' + userPrompt,
+    chunk => appendToStream(msgEl, chunk),
+    () => { finalizeStream(msgEl); setAIBusy(false); state.ai.busy = false; },
+    err => { appendToStream(msgEl, '\n\nError: ' + err); finalizeStream(msgEl); setAIBusy(false); state.ai.busy = false; }
+  );
+}
+
+function setAIBusy(busy, label) {
+  document.getElementById('thinking-msg').textContent = label || '';
+  document.getElementById('ai-thinking').classList.toggle('hidden', !busy);
+  document.getElementById('btn-send').disabled = busy || !state.ai.apiKey;
+  ['btn-best-pick','btn-team','btn-bye'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = busy;
+  });
+}
+
+function addStreamingMessage() {
+  const msgs = document.getElementById('ai-messages');
+  const thinking = document.getElementById('ai-thinking');
+  const div = document.createElement('div');
+  div.className = 'msg msg-ai';
+  div.innerHTML = '<div class="msg-label">Claude</div><div class="stream-body"></div>';
+  msgs.insertBefore(div, thinking);
+  return div.querySelector('.stream-body');
+}
+
+function appendToStream(el, chunk) {
+  streamBuffer += chunk;
+  el.innerHTML = renderMD(streamBuffer) + '<span class="cursor"></span>';
+  el.closest('.ai-messages').scrollTop = 99999;
+}
+
+function finalizeStream(el) {
+  el.innerHTML = renderMD(streamBuffer);
+  streamBuffer = '';
+  el.closest('.ai-messages').scrollTop = 99999;
+}
+
+function renderMD(t) {
+  return t
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/^#{1,3} (.+)$/gm,'<h4 style="color:var(--ai);margin:8px 0 3px">$1</h4>')
+    .replace(/^[-*] (.+)$/gm,'<li>$1</li>')
+    .replace(/(<li>.*?<\/li>(\n<li>.*?<\/li>)*)/gs, m => `<ul style="padding-left:16px;margin:4px 0">${m}</ul>`)
+    .replace(/\n\n/g,'<br><br>').replace(/\n/g,'<br>');
+}
+
+function addAIMessage(type, text, isError) {
+  const msgs = document.getElementById('ai-messages');
+  const thinking = document.getElementById('ai-thinking');
+  const div = document.createElement('div');
+  div.className = `msg ${type === 'user' ? 'msg-user' : 'msg-ai'} ${isError ? 'msg-error' : ''}`;
+  div.innerHTML = type === 'ai'
+    ? `<div class="msg-label">Claude</div>${renderMD(text)}`
+    : `<span style="white-space:pre-wrap">${text.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>`;
+  msgs.insertBefore(div, thinking);
+  msgs.scrollTop = 99999;
+}
+
+function clearChat() {
+  Array.from(document.getElementById('ai-messages').querySelectorAll('.msg')).forEach(el => el.remove());
+}
+
+function askBestPick() {
+  if (!state.ai.panelOpen) toggleAIPanel();
+  addAIMessage('user', 'What is the best pick available right now?');
+  runAIQuery('What is the single best pick I should make right now? Give your #1 recommendation and why, then 2 backup options if that player is gone.', 'Finding best available pick...');
+}
+
+function askTeamAnalysis() {
+  if (!state.ai.panelOpen) toggleAIPanel();
+  addAIMessage('user', 'Analyze my team — what do I need?');
+  runAIQuery('Analyze my current roster. What positions am I strong/weak at? What is my biggest need? Give me a priority list for my next 3 picks.', 'Analyzing your roster...');
+}
+
+function askByeWeeks() {
+  if (!state.ai.panelOpen) toggleAIPanel();
+  addAIMessage('user', 'Do I have bye week conflicts?');
+  runAIQuery('Review my roster bye weeks. Are there weeks where I lose multiple starters? Which available players should I target or avoid based on bye conflicts?', 'Checking bye weeks...');
+}
+
+function analyzePlayer(pid) {
+  const p = state.players.find(x => x.id === pid);
+  if (!p) return;
+  if (!state.ai.panelOpen) toggleAIPanel();
+  const q = `Should I draft ${p.name} (${p.pos}, ${p.team})? `
+    + `Bye week ${p.bye || 'unknown'}. `
+    + (p.injuryStatus ? `Listed as ${p.injuryStatus}. ` : 'Healthy. ')
+    + (p.pts != null ? `Scored ${p.pts.toFixed(0)} fantasy pts in the 2025 season. ` : '')
+    + `Depth: ${p.depth === 1 ? 'starter' : p.depth === 2 ? '2nd string' : 'backup'}. `
+    + `Analyze fit with my roster and give a clear draft or pass verdict.`;
+  addAIMessage('user', `Analyze: ${p.name} (${p.pos} - ${p.team})`);
+  runAIQuery(q, `Analyzing ${p.name}...`);
+}
+
+function sendAIMessage() {
+  const input = document.getElementById('ai-input');
+  const text = input.value.trim();
+  if (!text || state.ai.busy) return;
+  input.value = '';
+  addAIMessage('user', text);
+  runAIQuery(text);
+}
+
+function handleAIKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAIMessage(); }
+}
+
+// FILTERS & EVENTS
+document.querySelectorAll('.pos-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.pos-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.filter.pos = tab.dataset.pos;
+    render();
+  });
+});
+document.getElementById('search-box').addEventListener('input', () => render());
+document.getElementById('settings-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('settings-modal')) closeSettings();
+});
+
+// LOADING / ERROR
+function setLoading(msg) {
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('loading-msg').textContent = msg;
+}
+function hideLoading() { document.getElementById('loading').classList.add('hidden'); }
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg; el.classList.remove('hidden');
+  document.getElementById('data-status').textContent = 'Error';
+}
+
+// INIT
+const savedKey = localStorage.getItem('ff_api_key');
+if (savedKey) {
+  state.ai.apiKey = savedKey;
+  document.getElementById('api-key-input').value = '●'.repeat(20);
+  document.getElementById('key-status').innerHTML = '<span class="key-ok">API key loaded from previous session</span>';
+  enableAIButtons(true);
+}
+loadData();
+
+function renderTeamsView() {
+  const el = document.getElementById('teams-view');
+  const pm = Object.fromEntries(state.players.map(p=>[p.id,p]));
+  const n = state.leagueSettings.teams;
+
+  if (!state.teams.length) {
+    el.innerHTML = '<div class="team-no-draft">Start a draft to see team rosters.<br><br><button class="btn btn-primary" onclick="openDraftSetup()">🏈 Start Draft</button></div>';
+    return;
+  }
+
+  // Group picks by team
+  const teamPicks = Array.from({length:n}, () => []);
+  state.draft.picks.forEach(pk => {
+    if (pk.teamIdx < n) teamPicks[pk.teamIdx].push(pk);
+  });
+
+  const POS_ORDER = ['QB','RB','WR','TE','K','DEF'];
+
+  const cards = state.teams.map((team, idx) => {
+    const picks = teamPicks[idx] || [];
+    const isMine = idx === state.myTeamIdx;
+    const pickCount = picks.length;
+
+    // Group by position
+    const byPos = {};
+    picks.forEach(pk => {
+      const p = pm[pk.playerId];
+      if (!p) return;
+      if (!byPos[p.pos]) byPos[p.pos] = [];
+      byPos[p.pos].push({p, overall: pk.overall});
+    });
+
+    let bodyHTML = '';
+    let hasAny = false;
+    POS_ORDER.forEach(pos => {
+      if (!byPos[pos] || !byPos[pos].length) return;
+      hasAny = true;
+      bodyHTML += `<div class="team-pos-group">
+        <div class="team-pos-label"><span class="pos-badge pos-${pos}" style="font-size:9px;padding:1px 4px">${pos}</span></div>`;
+      byPos[pos].forEach(({p, overall}) => {
+        const inj = p.injuryStatus ? ` <span class="inj-badge inj-${p.injuryStatus.charAt(0)}" style="font-size:9px;padding:0 3px">${p.injuryStatus.charAt(0)}</span>` : '';
+        bodyHTML += `<div class="team-player-row">
+          <span class="team-player-pick">#${overall}</span>
+          <span class="team-player-name">${p.name}${inj}</span>
+          <span class="team-player-team">${p.team}</span>
+          ${p.bye ? `<span style="font-size:9px;color:var(--muted)">Bye${p.bye}</span>` : ''}
+        </div>`;
+      });
+      bodyHTML += '</div>';
+    });
+
+    if (!hasAny) {
+      bodyHTML = '<div class="team-empty">No picks yet</div>';
+    }
+
+    return `<div class="team-card ${isMine?'my-team-card':''}">
+      <div class="team-card-header ${isMine?'mine':''}">
+        <div class="team-card-name">
+          <input value="${team.name.replace(/"/g,'&quot;')}"
+                 onchange="renameTeam(${idx}, this.value)"
+                 title="Click to rename"
+                 ${isMine?'':''}>
+        </div>
+        ${isMine ? '<span style="font-size:10px;color:var(--accent);font-weight:700">★ MY TEAM</span>' : ''}
+        <span class="team-card-picks">${pickCount} picks</span>
+      </div>
+      <div class="team-card-body">${bodyHTML}</div>
+    </div>`;
+  }).join('');
+
+  const totalDrafted = state.draft.picks.length;
+  el.innerHTML = `
+    <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:12px;color:var(--muted)">${totalDrafted} total picks · ${n} teams · Click any team name to rename</span>
+    </div>
+    <div class="teams-grid">${cards}</div>`;
+}
+
+function renameTeam(idx, name) {
+  if (state.teams[idx]) {
+    state.teams[idx].name = name || `Team ${idx+1}`;
+    lsSaveTeams();
+    // Refresh bar and board if visible
+    if (state.draft.started) updateDraftBar();
+    if (currentView === 'board') renderDraftGrid();
+    if (currentView === 'log')   renderPickLog();
+  }
+}
+
+</script>
+
+<!-- Draft Setup Modal -->
+<div class="modal-overlay hidden" id="draft-setup-modal">
+  <div class="modal" style="width:560px">
+    <h2>🏈 NFL Cliff Dog Fantasy Football Draft Setup</h2>
+    <div class="modal-section-title">Draft Mode</div>
+    <div class="mode-toggle">
+      <div class="mode-opt active" id="mode-btn-live" onclick="selectDraftMode('live')">
+        <div class="mode-icon">📡</div><div class="mode-lbl">Live Draft</div>
+        <div class="mode-dsc">Record each team's pick manually as it happens</div>
+      </div>
+      <div class="mode-opt" id="mode-btn-mock" onclick="selectDraftMode('mock')">
+        <div class="mode-icon">🤖</div><div class="mode-lbl">Mock Draft</div>
+        <div class="mode-dsc">CPU auto-picks for other teams — practice your strategy</div>
+      </div>
+    </div>
+    <div class="modal-section-title" style="margin-top:14px">Teams
+      <span style="color:var(--muted);font-size:10px;margin-left:6px">Click "Set Mine" for your team · snake draft order</span>
+    </div>
+    <div class="setup-grid" id="setup-teams-grid"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeDraftSetup()">Cancel</button>
+      <button class="btn btn-primary" onclick="startDraft()">Start Draft ▶</button>
+    </div>
+  </div>
+</div>
+
+<!-- Team Assign Modal -->
+<div class="modal-overlay hidden" id="team-assign-modal">
+  <div class="modal" style="width:420px">
+    <h2>📌 Who Picked This Player?</h2>
+    <div style="font-size:13px;font-weight:600;color:var(--accent)" id="assign-player-name"></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px" id="assign-pick-info"></div>
+    <div class="team-grid" id="assign-team-grid"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeTeamAssign()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  LOCALSTORAGE PERSISTENCE
+// ═══════════════════════════════════════════════════════════
+const LS = { SETTINGS:'ff_settings3', TEAMS:'ff_teams2', DRAFT:'ff_draft2', API_KEY:'ff_api_key' };
+
+function lsSaveSettings() { localStorage.setItem(LS.SETTINGS, JSON.stringify(state.leagueSettings)); }
+function lsLoadSettings() {
+  try {
+    const s = localStorage.getItem(LS.SETTINGS);
+    if (s) {
+      const d = JSON.parse(s);
+      // Merge scoring over league defaults so new stat categories always exist
+      const scoring = { ...LEAGUE_SCORING, ...(d.scoring || {}) };
+      Object.assign(state.leagueSettings, d);
+      state.leagueSettings.scoring = scoring;
+    }
+  } catch {}
+}
+function lsSaveTeams() { localStorage.setItem(LS.TEAMS, JSON.stringify({teams:state.teams,myTeamIdx:state.myTeamIdx})); }
+function lsLoadTeams() {
+  try { const s=localStorage.getItem(LS.TEAMS); if(s){const d=JSON.parse(s);state.teams=d.teams;state.myTeamIdx=d.myTeamIdx||0;} } catch {}
+}
+function lsSaveDraft() { localStorage.setItem(LS.DRAFT, JSON.stringify(state.draft)); }
+function lsLoadDraft() {
+  try { const s=localStorage.getItem(LS.DRAFT); if(s) state.draft=JSON.parse(s); } catch {}
+}
+function lsClearDraft() { localStorage.removeItem(LS.DRAFT); }
+
+// Patch saveSettings to also persist
+const _origSaveSettings = window.saveSettings;
+window.saveSettings = function() {
+  _origSaveSettings();
+  lsSaveSettings();
+};
+
+// ═══════════════════════════════════════════════════════════
+//  STATE EXTENSIONS
+// ═══════════════════════════════════════════════════════════
+state.teams = [];
+state.myTeamIdx = 0;
+state.draft = { mode:null, setupMode:'live', started:false, currentPick:1, picks:[] };
+state._assigningPlayer = null;
+
+// ═══════════════════════════════════════════════════════════
+//  TEAM SETUP
+// ═══════════════════════════════════════════════════════════
+function openDraftSetup() {
+  const n = state.leagueSettings.teams;
+  if (!state.teams.length || state.teams.length !== n) {
+    state.teams = Array.from({length:n}, (_,i) => ({name: i===0?'My Team':`Team ${i+1}`}));
+    state.myTeamIdx = 0;
+  }
+  renderSetupModal();
+  document.getElementById('draft-setup-modal').classList.remove('hidden');
+}
+
+function renderSetupModal() {
+  document.getElementById('setup-teams-grid').innerHTML = state.teams.map((t,i) =>
+    `<div class="setup-row ${i===state.myTeamIdx?'mine':''}" id="srow-${i}">
+       <span class="setup-num">${i+1}</span>
+       <input class="setup-inp" id="sinp-${i}" value="${t.name.replace(/"/g,'&quot;')}" placeholder="Team ${i+1}">
+       <button class="setup-mine-btn ${i===state.myTeamIdx?'active':''}" onclick="setMyTeam(${i})">${i===state.myTeamIdx?'★ Mine':'Set Mine'}</button>
+     </div>`
+  ).join('');
+  const mode = state.draft.setupMode || 'live';
+  document.getElementById('mode-btn-live').classList.toggle('active', mode==='live');
+  document.getElementById('mode-btn-mock').classList.toggle('active', mode==='mock');
+}
+
+function setMyTeam(idx) {
+  // Flush current input values first
+  state.teams.forEach((_,i) => { const el=document.getElementById('sinp-'+i); if(el) state.teams[i].name=el.value||`Team ${i+1}`; });
+  state.myTeamIdx = idx;
+  renderSetupModal();
+}
+
+function selectDraftMode(mode) {
+  state.draft.setupMode = mode;
+  document.getElementById('mode-btn-live').classList.toggle('active', mode==='live');
+  document.getElementById('mode-btn-mock').classList.toggle('active', mode==='mock');
+}
+
+function closeDraftSetup() { document.getElementById('draft-setup-modal').classList.add('hidden'); }
+
+function startDraft() {
+  state.teams.forEach((_,i) => { const el=document.getElementById('sinp-'+i); if(el) state.teams[i].name=el.value||`Team ${i+1}`; });
+  const mode = state.draft.setupMode || 'live';
+  state.draft = { mode, setupMode:mode, started:true, currentPick:1, picks:[] };
+  state.drafted.clear();
+  state.myTeam = [];
+  state.queue = [];
+  lsSaveTeams();
+  lsSaveDraft();
+  closeDraftSetup();
+  document.getElementById('start-draft-btn').classList.add('hidden');
+  document.getElementById('end-draft-btn').classList.remove('hidden');
+  updateDraftBar();
+  setView('board');
+  render();
+  if (mode === 'mock') setTimeout(mockAutoPick, 400);
+}
+
+function endDraft() {
+  if (!confirm('End the draft and reset all picks?')) return;
+  state.draft = {mode:null,setupMode:state.draft.setupMode||'live',started:false,currentPick:1,picks:[]};
+  state.drafted.clear(); state.myTeam=[]; state.queue=[];
+  lsClearDraft();
+  document.getElementById('start-draft-btn').classList.remove('hidden');
+  document.getElementById('end-draft-btn').classList.add('hidden');
+  updateDraftBar();
+  setView('players');
+  render();
+}
+
+// Snake draft: 0-based team index for a given overall pick (1-based)
+function teamForPick(overall) {
+  const n = state.leagueSettings.teams;
+  const round = Math.ceil(overall / n);
+  const pos = (overall - 1) % n;
+  return round % 2 === 1 ? pos : (n - 1 - pos);
+}
+function isMyPick(overall) { return teamForPick(overall) === state.myTeamIdx; }
+function pickOwnerName(overall) { const t=state.teams[teamForPick(overall)]; return t?t.name:`Team ${teamForPick(overall)+1}`; }
+
+// ═══════════════════════════════════════════════════════════
+//  DRAFT PICK RECORDING
+// ═══════════════════════════════════════════════════════════
+function recordPick(playerId, teamIdx) {
+  const overall = state.draft.currentPick;
+  const n = state.leagueSettings.teams;
+  const round = Math.ceil(overall / n);
+  const pickInRound = (overall - 1) % n + 1;
+  state.draft.picks.push({overall, round, pickInRound, teamIdx, playerId});
+  state.drafted.add(playerId);
+  if (teamIdx === state.myTeamIdx) state.myTeam.push({id:playerId, pick:overall});
+  state.queue = state.queue.filter(q => q !== playerId);
+  state.draft.currentPick++;
+  lsSaveDraft();
+  updateDraftBar();
+  render();
+  if (currentView === 'board') renderDraftGrid();
+  if (currentView === 'log')   renderPickLog();
+}
+
+function undoLastPick() {
+  if (!state.draft.picks.length) return;
+  const last = state.draft.picks.pop();
+  state.drafted.delete(last.playerId);
+  if (last.teamIdx === state.myTeamIdx) state.myTeam=state.myTeam.filter(t=>t.id!==last.playerId);
+  state.draft.currentPick--;
+  lsSaveDraft();
+  updateDraftBar();
+  render();
+  if (currentView==='board') renderDraftGrid();
+  if (currentView==='log')   renderPickLog();
+}
+
+// Override the existing draftPlayer to integrate with team tracking
+window.draftPlayer = function(id) {
+  if (!state.draft.started) {
+    // Simple mode (no draft started)
+    state.drafted.add(id);
+    state.myTeam.push({id, pick:state.myTeam.length+1});
+    state.queue = state.queue.filter(q => q !== id);
+    render(); return;
+  }
+  if (isMyPick(state.draft.currentPick)) {
+    recordPick(id, state.myTeamIdx);
+    if (state.draft.mode === 'mock') setTimeout(mockAutoPick, 350);
+  } else {
+    openTeamAssign(id);
+  }
+};
+
+function openTeamAssign(playerId) {
+  const p = state.players.find(x=>x.id===playerId);
+  if (!p) return;
+  state._assigningPlayer = playerId;
+  const overall = state.draft.currentPick;
+  document.getElementById('assign-player-name').textContent = `${p.name} (${p.pos} — ${p.team})`;
+  document.getElementById('assign-pick-info').textContent =
+    `Pick ${overall} · Round ${Math.ceil(overall/state.leagueSettings.teams)} · Expected: ${pickOwnerName(overall)}`;
+  document.getElementById('assign-team-grid').innerHTML = state.teams.map((t,i) =>
+    `<button class="team-btn ${i===state.myTeamIdx?'mine':''}" onclick="confirmAssign(${i})">
+       <div>${t.name}</div><div style="font-size:10px;color:var(--muted);margin-top:2px">Pick position ${i+1}</div>
+     </button>`
+  ).join('');
+  document.getElementById('team-assign-modal').classList.remove('hidden');
+}
+
+function confirmAssign(teamIdx) {
+  const pid = state._assigningPlayer; state._assigningPlayer = null;
+  document.getElementById('team-assign-modal').classList.add('hidden');
+  recordPick(pid, teamIdx);
+  if (state.draft.mode==='mock') setTimeout(mockAutoPick, 350);
+}
+function closeTeamAssign() {
+  state._assigningPlayer=null;
+  document.getElementById('team-assign-modal').classList.add('hidden');
+}
+
+// Mock draft CPU auto-pick
+// Roster limits a CPU team will respect
+const CPU_MAX = { QB: 2, RB: 8, WR: 8, TE: 2, K: 1, DEF: 1 };
+
+function cpuSelectPick(teamIdx) {
+  const teams = state.leagueSettings.teams;
+  const rounds = state.leagueSettings.rounds;
+  const round = Math.ceil(state.draft.currentPick / teams);
+  const roundsLeft = rounds - round + 1;
+
+  // Positional counts for this CPU team's roster so far
+  const pm = Object.fromEntries(state.players.map(p => [p.id, p]));
+  const counts = {};
+  POSITIONS.forEach(pos => counts[pos] = 0);
+  state.draft.picks.forEach(pk => {
+    if (pk.teamIdx !== teamIdx) return;
+    const p = pm[pk.playerId];
+    if (p) counts[p.pos]++;
+  });
+
+  const available = state.players.filter(p => !state.drafted.has(p.id)); // sorted by rankVal
+  if (!available.length) return null;
+
+  // If remaining rounds are only enough to fill required K/DEF, fill them now
+  const stillNeed = ['K','DEF'].filter(pos => counts[pos] < 1);
+  if (stillNeed.length >= roundsLeft) {
+    const cand = available.find(p => p.pos === stillNeed[0]);
+    if (cand) return cand;
+  }
+
+  // Candidate pool: best available, filtered by sensible draft behavior
+  let pool = available.filter(p => {
+    if (counts[p.pos] >= CPU_MAX[p.pos]) return false;
+    if ((p.pos === 'K' || p.pos === 'DEF') && roundsLeft > 3) return false; // no K/DEF until late
+    if (p.pos === 'QB' && counts.QB >= 1 && round <= 8) return false;      // no backup QB early
+    if (p.pos === 'TE' && counts.TE >= 1 && round <= 8) return false;      // no 2nd TE early
+    return true;
+  });
+  if (!pool.length) pool = available;
+
+  // Weighted random among the top 5 by value — favors the best player but
+  // keeps mock drafts from being identical every time
+  const top = pool.slice(0, Math.min(5, pool.length));
+  const weights = [0.45, 0.25, 0.15, 0.10, 0.05];
+  let r = Math.random() * weights.slice(0, top.length).reduce((a,b) => a+b, 0);
+  for (let i = 0; i < top.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return top[i];
+  }
+  return top[0];
+}
+
+function mockAutoPick() {
+  if (!state.draft.started || state.draft.mode!=='mock') return;
+  const totalPicks = state.leagueSettings.teams * state.leagueSettings.rounds;
+  // Keep picking for CPU teams until it's the user's turn or draft ends
+  function pickOne() {
+    if (state.draft.currentPick > totalPicks) { updateDraftBar(); return; }
+    if (isMyPick(state.draft.currentPick)) { updateDraftBar(); return; }
+    const teamIdx = teamForPick(state.draft.currentPick);
+    const pick = cpuSelectPick(teamIdx);
+    if (!pick) return;
+    recordPick(pick.id, teamIdx);
+    setTimeout(pickOne, 180);
+  }
+  pickOne();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  VIEWS
+// ═══════════════════════════════════════════════════════════
+let currentView = 'players';
+
+function setView(v) {
+  currentView = v;
+  ['players','board','log','teams'].forEach(name => {
+    const tab = document.getElementById('view-'+name);
+    if (tab) tab.classList.toggle('active', name===v);
+    const el = document.getElementById(name+'-view');
+    if (el) el.classList.toggle('view-hidden', name!==v);
+  });
+  if (v==='board') renderDraftGrid();
+  if (v==='log')   renderPickLog();
+  if (v==='teams') renderTeamsView();
+}
+
+function renderDraftGrid() {
+  const n = state.leagueSettings.teams;
+  const rounds = state.leagueSettings.rounds;
+  const pm = Object.fromEntries(state.players.map(p=>[p.id,p]));
+
+  let h = '<table class="draft-grid"><thead><tr><th style="min-width:36px">Rd</th>';
+  for (let t=0;t<n;t++) {
+    const name = state.teams[t]?state.teams[t].name:`Team ${t+1}`;
+    h += `<th class="${t===state.myTeamIdx?'my-col':''}">${name}</th>`;
+  }
+  h += '</tr></thead><tbody>';
+
+  for (let rd=1;rd<=rounds;rd++) {
+    h += `<tr><td class="round-lbl">${rd}</td>`;
+    for (let t=0;t<n;t++) {
+      const pos = rd%2===1 ? t : (n-1-t);
+      const overall = (rd-1)*n + pos + 1;
+      const pick = state.draft.picks.find(pk=>pk.overall===overall);
+      const isCur = state.draft.started && overall===state.draft.currentPick;
+      const isMine = t===state.myTeamIdx;
+      let cell = '';
+      if (pick) {
+        const p=pm[pick.playerId];
+        cell = p
+          ? `<div class="gcell-name">${p.name}</div><div class="gcell-meta"><span class="pos-badge pos-${p.pos}" style="font-size:9px;padding:1px 4px">${p.pos}</span> ${p.team}</div>`
+          : '<div class="gcell-empty">?</div>';
+      } else if (isCur) {
+        cell = `<div style="color:var(--yellow);font-weight:700;font-size:10px">▶ Pick ${overall}</div>`;
+      } else {
+        cell = `<div class="gcell-empty">#${overall}</div>`;
+      }
+      h += `<td class="${isMine?'my-col':''} ${isCur?'cur-pick':''}">${cell}</td>`;
+    }
+    h += '</tr>';
+  }
+  h += '</tbody></table>';
+  document.getElementById('board-view').innerHTML = `<div class="draft-board-wrap">${h}</div>`;
+  setTimeout(()=>{ const c=document.querySelector('.cur-pick'); if(c) c.scrollIntoView({behavior:'smooth',block:'center'}); },60);
+}
+
+function renderPickLog() {
+  const pm = Object.fromEntries(state.players.map(p=>[p.id,p]));
+  const el = document.getElementById('log-view');
+  if (!state.draft.picks.length) {
+    el.innerHTML = '<div class="pick-log" style="display:flex;align-items:center;justify-content:center;color:var(--muted)">No picks yet</div>';
+    return;
+  }
+  const items = [...state.draft.picks].reverse().map(pk => {
+    const p=pm[pk.playerId];
+    const tname = state.teams[pk.teamIdx]?state.teams[pk.teamIdx].name:`Team ${pk.teamIdx+1}`;
+    const mine = pk.teamIdx===state.myTeamIdx;
+    return `<div class="pick-log-item ${mine?'mine':''}">
+      <span class="p-num">#${pk.overall}</span>
+      <span class="p-rd">R${pk.round}.${pk.pickInRound}</span>
+      <span class="p-team" title="${tname}">${tname}</span>
+      <span class="p-plyr">${p?p.name:'Unknown'}</span>
+      ${p?`<span class="pos-badge pos-${p.pos}" style="font-size:9px;padding:1px 4px">${p.pos}</span>`:''}
+      ${p?`<span style="color:var(--muted);font-size:10px">${p.team}</span>`:''}
+    </div>`;
+  }).join('');
+  el.innerHTML = `<div class="pick-log">${items}</div>`;
+}
+
+function updateDraftBar() {
+  const bar = document.getElementById('draft-bar');
+  if (!state.draft.started) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  const overall = state.draft.currentPick;
+  const n = state.leagueSettings.teams;
+  const total = n * state.leagueSettings.rounds;
+  if (overall > total) {
+    bar.innerHTML = `<span style="color:var(--green);font-weight:700;font-size:14px">🎉 Draft Complete!</span>
+      <button class="btn btn-outline" style="padding:4px 10px;font-size:11px" onclick="setView('board')">View Board</button>
+      <button class="btn btn-outline" style="padding:4px 10px;font-size:11px" onclick="endDraft()">Reset</button>`;
+    return;
+  }
+  const round = Math.ceil(overall/n);
+  const mine = isMyPick(overall);
+  const tname = pickOwnerName(overall);
+  const modeIcon = state.draft.mode==='mock'?'🤖':'📡';
+  bar.innerHTML = `
+    <span style="color:var(--muted);font-size:11px">${modeIcon} ${state.draft.mode==='mock'?'Mock':'Live'} Draft</span>
+    <div class="pick-indicator ${mine?'my-pick':''}">
+      ${mine?'⭐ YOUR PICK':'⏳'} &nbsp;Pick ${overall} &nbsp;·&nbsp; Round ${round} &nbsp;·&nbsp; ${tname}
+    </div>
+    ${state.draft.mode==='mock'&&!mine
+      ? `<button class="btn btn-outline" style="padding:3px 10px;font-size:11px" onclick="mockAutoPick()">▶ Run CPU Picks</button>`
+      : ''}
+    <button class="btn btn-outline" style="padding:3px 10px;font-size:11px" onclick="undoLastPick()" ${!state.draft.picks.length?'disabled':''}>↩ Undo</button>
+    <span style="margin-left:auto;color:var(--muted);font-size:11px">${state.draft.picks.length} / ${total} picks</span>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RESTORE DRAFT STATE ON LOAD
+// ═══════════════════════════════════════════════════════════
+function restoreDraftState() {
+  lsLoadSettings();
+  lsLoadTeams();
+  lsLoadDraft();
+  if (state.draft.started) {
+    // Rebuild drafted set and myTeam from saved picks
+    state.draft.picks.forEach(pk => {
+      state.drafted.add(pk.playerId);
+      if (pk.teamIdx === state.myTeamIdx) state.myTeam.push({id:pk.playerId, pick:pk.overall});
+    });
+    document.getElementById('start-draft-btn').classList.add('hidden');
+    document.getElementById('end-draft-btn').classList.remove('hidden');
+    updateDraftBar();
+  }
+}
+
+// Close modals on overlay click
+document.getElementById('draft-setup-modal').addEventListener('click', e => {
+  if (e.target===document.getElementById('draft-setup-modal')) closeDraftSetup();
+});
+document.getElementById('team-assign-modal').addEventListener('click', e => {
+  if (e.target===document.getElementById('team-assign-modal')) closeTeamAssign();
+});
+
+const _origHideLoading = window.hideLoading;
+window.hideLoading = function() {
+  _origHideLoading();
+  restoreDraftState();
+  render();
+  if (state.draft.started) setView('board');
+};
+</script>
+</body>
+</html>
