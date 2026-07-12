@@ -268,6 +268,13 @@
       background: var(--surface2); border: 1px solid var(--border);
       padding: 2px 6px; border-radius: 3px;
     }
+    .ai-close-btn {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 5px;
+      padding: 4px 10px; font-size: 14px; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+    }
+    .ai-close-btn:hover { border-color: var(--ai); color: var(--ai); }
 
     /* API key section */
     .ai-key-section {
@@ -449,6 +456,10 @@
       td { padding: 9px 6px; }
       .btn-queue, .btn-draft, .btn-undraft, .btn-analyze { padding: 7px 10px; font-size: 12px; }
       .stats-bar > div:last-child { display: none; } /* injury legend */
+
+      .ai-header { padding: 10px; gap: 6px; }
+      .ai-header h3 { font-size: 12px; }
+      #ai-model-select { max-width: 130px; }
 
       .modal { width: 94vw; padding: 16px; max-height: 88vh; }
       .modal-scoring-grid { grid-template-columns: 1fr 1fr; }
@@ -823,6 +834,7 @@
         <option value="claude-sonnet-4-6" selected>Sonnet (recommended)</option>
         <option value="claude-opus-4-6">Opus (most capable)</option>
       </select>
+      <button class="ai-close-btn" onclick="toggleAIPanel()" title="Close advisor">✕</button>
     </div>
 
     <!-- API key -->
