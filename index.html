@@ -204,6 +204,7 @@
     .inj-IR  { background: rgba(239,68,68,.3);  color: #fca5a5;       border: 1px solid #fca5a5; }
     .inj-PUP { background: rgba(239,68,68,.3);  color: #fca5a5;       border: 1px solid #fca5a5; }
 
+    .trend-badge { font-size: 11px; cursor: help; }
     .depth-1 { color: var(--green); font-weight: 700; font-size: 11px; }
     .depth-2 { color: var(--yellow); font-size: 11px; }
     .depth-3 { color: var(--muted); font-size: 11px; }
@@ -448,9 +449,9 @@
       .search-box { flex: 1; width: auto; min-width: 120px; }
       .toolbar-right { width: 100%; margin-left: 0; justify-content: space-between; }
 
-      /* Slim table: hide Bye / Status / Depth / 2025 Pts columns */
+      /* Slim table: hide Bye(5), Depth(7), Last-Yr-Pts(9).
+         Injury Status(6) and ADP(8) stay — they matter most on draft day. */
       #player-table th:nth-child(5), #player-table td:nth-child(5),
-      #player-table th:nth-child(6), #player-table td:nth-child(6),
       #player-table th:nth-child(7), #player-table td:nth-child(7),
       #player-table th:nth-child(9), #player-table td:nth-child(9) { display: none; }
       td { padding: 9px 6px; }
@@ -725,6 +726,7 @@
   <div class="tagline">created by Larry Flores</div>
   <div class="spacer"></div>
   <div id="data-status" style="font-size:11px;color:var(--muted)">Loading…</div>
+  <button class="btn btn-outline" onclick="refreshData()" title="Pull the latest players, injuries and depth charts">⟳ Refresh</button>
   <button class="btn btn-outline" onclick="openSettings()">⚙️ Settings</button>
   <div class="view-tabs">
     <button class="view-tab active" id="view-players" onclick="setView('players')">📋 Players</button>
@@ -799,7 +801,7 @@
             <th onclick="sortBy('status')" data-col="status">Status</th>
             <th onclick="sortBy('depth')" data-col="depth">Depth</th>
             <th onclick="sortBy('adp')" data-col="adp" title="Average Draft Position (expert consensus)">ADP</th>
-            <th onclick="sortBy('pts')" data-col="pts">2025 Pts</th>
+            <th onclick="sortBy('pts')" data-col="pts" id="th-pts">Last Yr Pts</th>
             <th style="width:140px">Actions</th>
           </tr>
         </thead>
@@ -972,49 +974,163 @@ function bundledAdpJson() {
   return { players: BUNDLED_ADP.map(r => ({ name: r[0], position: r[1], team: r[2], bye: r[3], adp: r[4] })) };
 }
 
-async function loadData() {
-  setLoading('Loading player data…');
+// ── Offline / fast-start cache ──────────────────────────────
+// Sleeper asks that the 5MB player file be pulled at most once a day. We cache a
+// slimmed copy so the app starts instantly on mobile and still works if the
+// venue wifi dies mid-draft. "Refresh" forces a live pull for late injury news.
+const PLAYER_CACHE_KEY = 'ff_players_v2';
+const PLAYER_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+
+function savePlayerCache() {
   try {
-    // Bundled ADP is applied immediately so rankings are never wrong,
-    // then we try to upgrade to live ADP in the background.
+    localStorage.setItem(PLAYER_CACHE_KEY, JSON.stringify({
+      at: Date.now(), season: state.statsSeason, players: state.players
+    }));
+  } catch {} // quota exceeded: run without a cache
+}
+function loadPlayerCache() {
+  try {
+    const raw = localStorage.getItem(PLAYER_CACHE_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || !Array.isArray(d.players) || !d.players.length) return null;
+    if (Date.now() - d.at > PLAYER_CACHE_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+function applyPlayerCache(d) {
+  state.players = d.players;
+  state.statsSeason = d.season;
+  state.stats = {};
+  state.players.forEach(p => { state.stats[p.id] = p.st || {}; });
+  state.dataAt = d.at;
+  applyTrending();
+  recomputeRankings();
+}
+
+// Which season's stats to show: during preseason the current year is empty,
+// so fall back to last completed season rather than showing everyone at 0.
+async function resolveStatsSeason() {
+  try {
+    const s = await fetch('https://api.sleeper.app/v1/state/nfl').then(r => r.json());
+    if (s && s.season) {
+      return (s.season_type === 'pre' || s.season_type === 'off')
+        ? (s.previous_season || String(+s.season - 1))
+        : s.season;
+    }
+  } catch {}
+  return String(new Date().getMonth() < 8 ? new Date().getFullYear() - 1 : new Date().getFullYear());
+}
+
+async function fetchTrending() {
+  try {
+    const r = await fetch('https://api.sleeper.app/v1/players/nfl/trending/add?lookback_hours=48&limit=75');
+    const arr = await r.json();
+    const m = {};
+    if (Array.isArray(arr)) arr.forEach(x => { if (x && x.player_id) m[x.player_id] = x.count || 0; });
+    return m;
+  } catch { return {}; }
+}
+
+async function loadData(forceRefresh) {
+  setLoading(forceRefresh ? 'Refreshing player data…' : 'Loading player data…');
+  try {
+    // Bundled ADP applies immediately so rankings are never wrong,
+    // then we try to upgrade to live ADP.
     buildAdpIndex(bundledAdpJson());
     state.adpSource = 'bundled';
 
-    const [playersRes, statsRes, adpRes] = await Promise.allSettled([
+    // Fast path: recent cache, no network wait
+    const cached = forceRefresh ? null : loadPlayerCache();
+    if (cached) {
+      applyPlayerCache(cached);
+      hideLoading();
+      updateDataStatus();
+      render();
+      // Still try for live ADP + trending quietly in the background
+      Promise.allSettled([fetchAdpJson(), fetchTrending()]).then(([a, t]) => {
+        let changed = false;
+        if (a.status === 'fulfilled' && a.value) { buildAdpIndex(a.value); state.adpSource = 'live'; changed = true; }
+        if (t.status === 'fulfilled' && Object.keys(t.value).length) { state.trending = t.value; applyTrending(); changed = true; }
+        if (changed) { recomputeRankings(); updateDataStatus(); render(); }
+      });
+      return;
+    }
+
+    const season = await resolveStatsSeason();
+    state.statsSeason = season;
+    const [playersRes, statsRes, adpRes, trendRes] = await Promise.allSettled([
       fetch('https://api.sleeper.app/v1/players/nfl').then(r => r.json()),
-      fetch('https://api.sleeper.app/v1/stats/nfl/regular/2025').then(r => r.json()),
-      fetchAdpJson()
+      fetch(`https://api.sleeper.app/v1/stats/nfl/regular/${season}`).then(r => r.json()),
+      fetchAdpJson(),
+      fetchTrending()
     ]);
     if (playersRes.status === 'rejected') throw new Error('Could not load players.');
     const rawPlayers = playersRes.value;
-    state.stats = statsRes.status === 'fulfilled' ? statsRes.value : {};
+    state.stats = statsRes.status === 'fulfilled' && statsRes.value ? statsRes.value : {};
+    state.trending = trendRes.status === 'fulfilled' ? trendRes.value : {};
     if (adpRes.status === 'fulfilled' && adpRes.value) {
       buildAdpIndex(adpRes.value);
       state.adpSource = 'live';
     }
     setLoading('Processing players…');
     processPlayers(rawPlayers);
+    state.dataAt = Date.now();
+    savePlayerCache();
     hideLoading();
-    updateDataStatus(statsRes.status === 'fulfilled');
+    updateDataStatus();
     render();
   } catch(err) {
     hideLoading();
-    showError('Failed to load: ' + err.message);
+    // Last resort: an expired cache beats no app at all
+    const stale = (() => { try { return JSON.parse(localStorage.getItem(PLAYER_CACHE_KEY)); } catch { return null; } })();
+    if (stale && Array.isArray(stale.players) && stale.players.length) {
+      applyPlayerCache(stale);
+      updateDataStatus();
+      render();
+      showError('⚠ Could not reach the player feed — showing your last saved data from ' +
+        new Date(stale.at).toLocaleString() + '. Tap ⟳ Refresh once you have a connection.');
+    } else {
+      showError('Failed to load: ' + err.message);
+    }
   }
 }
 
-function updateDataStatus(statsOk) {
+function refreshData() { loadData(true); }
+
+function ageLabel(ts) {
+  if (!ts) return 'unknown';
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const h = Math.round(mins / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+
+function updateDataStatus() {
+  const th = document.getElementById('th-pts');
+  if (th && state.statsSeason) th.textContent = `${state.statsSeason} Pts`;
   const el = document.getElementById('data-status');
   if (!el) return;
-  const src = state.adpSource === 'live' ? 'live ADP ✓' : 'ADP ✓ (bundled)';
-  el.textContent = `${state.players.length.toLocaleString()} players · ${src} (${state.adpCount}) · 2025 stats ${statsOk ? '✓' : '(n/a)'}`;
-  el.title = state.adpSource === 'live'
-    ? 'Expert ADP fetched live from FantasyFootballCalculator.'
-    : 'Using the expert ADP snapshot bundled with the app (live refresh unavailable in this browser).';
+  const src = state.adpSource === 'live' ? 'ADP live' : 'ADP bundled';
+  const inj = state.players.filter(p => p.injuryStatus).length;
+  el.textContent = `${state.players.length.toLocaleString()} players · ${src} · ${state.statsSeason || ''} stats · ${inj} injury flags · updated ${ageLabel(state.dataAt)}`;
+  el.title = 'Player data, injuries and depth charts from Sleeper. Click ⟳ Refresh to pull the latest.';
 }
 
 // ── ADP (expert consensus draft position) from Fantasy Football Calculator ──
 const TEAM_ALIASES = { JAC:'JAX', WSH:'WAS', ARZ:'ARI', BLT:'BAL', CLV:'CLE', HST:'HOU', LA:'LAR', SD:'LAC', OAK:'LV', STL:'LAR' };
+
+// Sleeper's player objects do NOT include bye weeks, so we derive a
+// team → bye-week map from the ADP data (which carries byes for all 32 teams).
+const TEAM_BYES = (() => {
+  const m = {};
+  BUNDLED_ADP.forEach(r => { if (r[3]) m[normTeam(r[2])] = r[3]; });
+  return m;
+})();
+function byeForTeam(team) { return TEAM_BYES[normTeam(team)] || null; }
+
 function normTeam(t) { t = (t||'').toUpperCase(); return TEAM_ALIASES[t] || t; }
 function normName(n) {
   return (n||'').toLowerCase()
@@ -1036,6 +1152,7 @@ function buildAdpIndex(json) {
     const key = pos === 'DEF' ? `DEF:${normTeam(a.team)}` : `${pos}:${normName(a.name)}`;
     if (state.adpIndex[key] == null) state.adpCount++;
     if (state.adpIndex[key] == null || adp < state.adpIndex[key]) state.adpIndex[key] = adp;
+    if (a.bye) TEAM_BYES[normTeam(a.team)] = a.bye; // keep byes current from live ADP
   });
 }
 
@@ -1053,21 +1170,59 @@ function processPlayers(raw) {
     if (!p.active) continue;
     if (!p.team && pos !== 'DEF') continue;
     const depth = p.depth_chart_order || 99;
+    const name = p.full_name
+      || [p.first_name, p.last_name].filter(Boolean).join(' ')
+      || p.last_name || id;
     list.push({
-      id, pos,
-      name: p.full_name || p.search_full_name || p.last_name || id,
+      id, pos, name,
       firstName: p.first_name || '',
       lastName: p.last_name || '',
       team: p.team || pos,
-      bye: p.bye_week || null,
+      bye: byeForTeam(p.team || pos),
       injuryStatus: p.injury_status || null,
       injuryNotes: p.injury_notes || '',
+      injuryBodyPart: p.injury_body_part || '',
+      injuryStart: p.injury_start_date || null,
+      practice: p.practice_participation || '',
+      status: p.status || '',            // Active / Injured Reserve / PUP / etc.
+      depthPos: p.depth_chart_position || '',
+      newsUpdated: p.news_updated || null,
       depth, pts: null, rankVal: 0, age: p.age || null,
       exp: typeof p.years_exp === 'number' ? p.years_exp : null,
+      st: slimStats(state.stats[id] || {}),
     });
   }
   state.players = list;
+  applyTrending();
   recomputeRankings();
+}
+
+// Only the stat fields scoring uses — keeps the offline cache small
+const STAT_FIELDS = ['pass_yd','pass_td','pass_int','rush_yd','rush_td','rec','rec_yd','rec_td',
+  'fum_lost','pass_2pt','rush_2pt','rec_2pt','st_td','fum_rec_td',
+  'fgm_0_19','fgm_20_29','fgm_30_39','fgm_40_49','fgm_50p','fgmiss',
+  'fgmiss_0_19','fgmiss_20_29','fgmiss_30_39','fgmiss_40_49','xpm','xpmiss',
+  'sack','int','fum_rec','def_td','td','safe','safety','blk_kick','def_st_td','def_2pt',
+  'pts_allow_0','pts_allow_1_6','pts_allow_7_13','pts_allow_14_20','pts_allow_21_27',
+  'pts_allow_28_34','pts_allow_35p','gp'];
+function slimStats(st) {
+  const o = {};
+  STAT_FIELDS.forEach(f => { if (st[f]) o[f] = st[f]; });
+  return o;
+}
+
+// Sleeper "trending adds" — surfaces late-breaking risers (injury replacements,
+// camp winners) that season-old stats and slow-moving ADP haven't caught up to.
+function applyTrending() {
+  const t = state.trending || {};
+  state.players.forEach(p => { p.trend = t[p.id] || 0; });
+}
+
+// Can this player actually suit up? Covers roster statuses and hard injury tags.
+function isUnavailable(p) {
+  if (/injured reserve|\bpup\b|physically unable|non[- ]football|suspend|\bnfi\b|retired|practice squad|inactive/i.test(p.status || '')) return true;
+  if (/^(out|ir|doubtful)$/i.test(p.injuryStatus || '')) return true;
+  return false;
 }
 
 function computePoints(pos, st) {
@@ -1154,9 +1309,16 @@ function recomputeRankings() {
     // K/DEF are weekly-streamable — heavy discount so raw season totals
     // (inflated by sacks/points-allowed tiers) can never top the board
     if (p.pos === 'K' || p.pos === 'DEF') vbd = vbd * 0.3 - 100;
+    // Players who can't play (IR / PUP / suspended / ruled Out) and who have no
+    // ADP get buried — otherwise a depth-chart "starter" on IR with no stats
+    // would inherit a big projection and float to the top of the board.
+    p.unavailable = isUnavailable(p);
+    if (p.unavailable) vbd = vbd * 0.1 - 500;
     // 5) Primary ranking: expert-consensus ADP (average draft position from
     //    real mock drafts). Players with an ADP always rank above players
     //    without one; among the rest, fall back to value-over-replacement.
+    //    ADP order is left intact for ranked players — the expert consensus
+    //    already prices in known injuries, and the Status column flags the rest.
     p.adp = lookupAdp(p);
     p.rankVal = p.adp != null ? 100000 - p.adp * 100 : vbd;
   });
@@ -1197,18 +1359,37 @@ function render() {
   updateSidebar();
 }
 
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Full injury picture: status + body part + practice participation + how long
+function injuryDetail(p) {
+  const bits = [];
+  if (p.injuryStatus) bits.push(p.injuryStatus);
+  if (p.injuryBodyPart) bits.push(p.injuryBodyPart);
+  if (p.practice) bits.push('Practice: ' + p.practice);
+  if (p.injuryStart) bits.push('since ' + p.injuryStart);
+  if (p.status && p.status !== 'Active') bits.push(p.status);
+  if (p.injuryNotes) bits.push(p.injuryNotes);
+  return bits.join(' · ') || 'Healthy';
+}
+
 function playerRow(p) {
   const drafted = state.drafted.has(p.id);
   const inQueue = state.queue.includes(p.id);
   const inj = p.injuryStatus;
 
   const injBadge = inj
-    ? `<span class="inj-badge inj-${inj.charAt(0)}" title="${p.injuryNotes||inj}">${inj}</span>`
-    : `<span style="color:var(--muted);font-size:10px">Healthy</span>`;
+    ? `<span class="inj-badge inj-${inj.charAt(0)}" title="${esc(injuryDetail(p))}">${inj}</span>`
+    : (p.status && p.status !== 'Active'
+        ? `<span class="inj-badge inj-IR" title="${esc(p.status)}">${esc(p.status.replace('Injured Reserve','IR'))}</span>`
+        : `<span style="color:var(--muted);font-size:10px">Healthy</span>`);
 
   const depthLabel = p.depth===1?`<span class="depth-1">Starter</span>`
                    : p.depth===2?`<span class="depth-2">2nd</span>`
-                   : p.depth<99 ?`<span class="depth-3">${p.depth}rd</span>`
+                   : p.depth<99 ?`<span class="depth-3">${p.depth}${p.depth===3?'rd':'th'}</span>`
                    :              `<span class="depth-3">—</span>`;
 
   const bye = p.bye
@@ -1238,8 +1419,8 @@ function playerRow(p) {
   return `<tr class="${drafted?'drafted':''} ${inQueue&&!drafted?'in-queue':''}" id="row-${p.id}">
     <td class="rank">${p.visRank||'—'}</td>
     <td>
-      <div class="player-name">${p.name}</div>
-      <div class="player-info">${p.age?`Age ${p.age}`:''}${p.exp!=null?` · Yr ${p.exp+1}`:''}</div>
+      <div class="player-name">${esc(p.name)}${p.trend>=1500?` <span class="trend-badge" title="Trending: ${p.trend.toLocaleString()} adds in the last 48h">🔥</span>`:''}</div>
+      <div class="player-info">${p.age?`Age ${p.age}`:''}${p.exp!=null?` · ${p.exp===0?'Rookie':'Yr '+(p.exp+1)}`:''}${p.depthPos?` · ${esc(p.depthPos)}`:''}</div>
     </td>
     <td><span class="pos-badge pos-${p.pos}">${p.pos}</span></td>
     <td><strong>${p.team}</strong></td>
@@ -1271,45 +1452,7 @@ function sortList(list) {
   });
 }
 
-function updateSidebar() {
-  const counts = {};
-  POSITIONS.forEach(p => counts[p] = 0);
-  state.players.forEach(p => { if (!state.drafted.has(p.id)) counts[p.pos] = (counts[p.pos]||0)+1; });
-  document.getElementById('pos-counts').innerHTML = POSITIONS.map(p =>
-    `<div><span style="color:var(--muted)">${p}</span></div><div><strong>${counts[p]||0}</strong></div>`
-  ).join('');
-
-  const drafted = state.drafted.size;
-  const total = state.leagueSettings.teams * state.leagueSettings.rounds;
-  document.getElementById('draft-progress').innerHTML =
-    `<div style="margin-bottom:5px">${drafted} / ${total} picks made</div>
-     <div style="background:var(--border);border-radius:3px;height:4px;overflow:hidden">
-       <div style="background:var(--accent);height:100%;width:${Math.min(100,(drafted/total)*100)}%;transition:width .3s"></div>
-     </div>`;
-
-  document.getElementById('sb-teams').textContent = state.leagueSettings.teams;
-  document.getElementById('sb-rounds').textContent = state.leagueSettings.rounds;
-  document.getElementById('sb-scoring').textContent = {league:'League',ppr:'PPR',half:'Half-PPR',std:'Standard',custom:'Custom'}[state.leagueSettings.scoringType];
-
-  const queueList = document.getElementById('queue-list');
-  document.getElementById('queue-count').textContent = `(${state.queue.length})`;
-  if (!state.queue.length) {
-    queueList.innerHTML = '<div class="queue-empty">Star ☆ players to queue them</div>';
-  } else {
-    const pm = Object.fromEntries(state.players.map(p=>[p.id,p]));
-    queueList.innerHTML = state.queue.map((id,i) => {
-      const p = pm[id]; if (!p) return '';
-      const dr = state.drafted.has(id);
-      return `<div class="queue-item ${dr?'drafted':''}">
-        <span style="color:var(--muted);font-size:11px;width:14px">${i+1}</span>
-        <span class="pos-badge pos-${p.pos}" style="font-size:9px;padding:1px 5px">${p.pos}</span>
-        <span class="q-name" style="${dr?'text-decoration:line-through':''}">${p.name}</span>
-        <span style="color:var(--muted);font-size:10px">${p.team}</span>
-        <button class="q-remove" onclick="toggleQueue('${id}')">×</button>
-      </div>`;
-    }).join('');
-  }
-}
+// (an earlier duplicate of updateSidebar() was removed — the definition below is the live one)
 
 // ═══════════════════════════════════════════════════════════
 //  DRAFT ACTIONS
@@ -1413,7 +1556,7 @@ async function refreshAdp() {
   buildAdpIndex(json);
   state.adpSource = 'live';
   recomputeRankings();
-  updateDataStatus(true);
+  updateDataStatus();
   render();
 }
 
@@ -1510,15 +1653,26 @@ function buildDraftContext() {
   state.myTeam.forEach(t => { const p = pm[t.id]; if (p) posCounts[p.pos] = (posCounts[p.pos] || 0) + 1; });
   const posSum = ['QB','RB','WR','TE','K','DEF'].map(pos => `${pos}:${posCounts[pos] || 0}`).join(' ');
 
+  // Bye weeks my starters already occupy — lets the AI flag stacking conflicts
+  const byeCounts = {};
+  state.myTeam.forEach(t => { const p = pm[t.id]; if (p && p.bye) byeCounts[p.bye] = (byeCounts[p.bye]||0)+1; });
+  const byeSum = Object.keys(byeCounts).length
+    ? Object.entries(byeCounts).sort((a,b)=>a[0]-b[0]).map(([w,c]) => `Wk${w}:${c}`).join(' ')
+    : 'none yet';
+
+  const season = state.statsSeason || '';
   const available = state.players
     .filter(p => !state.drafted.has(p.id))
     .slice(0, 30)
     .map((p, i) => {
-      const inj = p.injuryStatus ? ` [${p.injuryStatus}]` : '';
-      const depth = p.depth === 1 ? 'Starter' : p.depth === 2 ? '2nd' : `Depth${p.depth}`;
-      const pts = p.pts != null ? ` ${p.pts.toFixed(0)}pts(2025)` : '';
+      const inj = p.injuryStatus ? ` [${p.injuryStatus}${p.injuryBodyPart ? ' ' + p.injuryBodyPart : ''}${p.practice ? ', practice: ' + p.practice : ''}]` : '';
+      const st = p.status && p.status !== 'Active' ? ` [${p.status}]` : '';
+      const depth = p.depth === 1 ? 'Starter' : p.depth === 2 ? '2nd' : p.depth < 99 ? `Depth${p.depth}` : 'DepthNA';
+      const pts = p.pts != null ? ` ${p.pts.toFixed(0)}pts(${season})` : '';
       const adp = p.adp != null ? ` ADP:${p.adp.toFixed(1)}` : '';
-      return `  ${i+1}. ${p.name} | ${p.pos} | ${p.team} | Bye${p.bye || '?'} | ${depth}${inj}${pts}${adp}`;
+      const rook = p.exp === 0 ? ' ROOKIE' : '';
+      const hot = p.trend >= 1500 ? ` TRENDING(+${p.trend} adds/48h)` : '';
+      return `  ${i+1}. ${p.name} | ${p.pos} | ${p.team} | Bye${p.bye || '?'} | ${depth}${rook}${inj}${st}${pts}${adp}${hot}`;
     }).join('\n');
 
   const sc = ls.scoring;
@@ -1535,19 +1689,25 @@ function buildDraftContext() {
   const curRound = Math.min(ls.rounds, Math.ceil(curPick / ls.teams));
   const adpNote = state.adpCount > 0
     ? 'The list below is ordered by expert-consensus ADP — treat that order as the draft value baseline.'
-    : 'WARNING: expert ADP data is unavailable; the list is ordered by 2025 stat projections. Apply extra judgment — raw totals overvalue QB/K/DEF.';
+    : `WARNING: expert ADP data is unavailable; the list is ordered by ${season} stat projections. Apply extra judgment — raw totals overvalue QB/K/DEF.`;
 
   return `League: ${ls.teams} teams, ${ls.rounds} rounds, ${scoringName}
 Scoring: ${scoringDetail}
 Draft progress: Round ${curRound} of ${ls.rounds} (overall pick ${curPick}). Reminder: K/DEF only in the final 2-3 rounds.
 My roster (my pick #${state.myTeam.length + 1}): ${posSum}
 ${myTeamStr}
+My bye-week exposure so far: ${byeSum}
 
 ${adpNote}
-Top 30 available (rank | name | pos | team | bye | depth | injury | 2025 pts | ADP):
+Top 30 available (rank | name | pos | team | bye | depth | rookie | injury | ${season} pts | ADP | trending):
 ${available}
 
-Note: 2025 point totals are raw sums under league scoring and are NOT comparable across positions (K/DEF totals look inflated). ADP is the cross-position value signal.`;
+Data notes:
+- Player data, injury designations and depth charts are from Sleeper, refreshed ${ageLabel(state.dataAt)}.
+- ${season} point totals are raw sums under league scoring and are NOT comparable across positions (K/DEF totals look inflated). ADP is the cross-position value signal.
+- "TRENDING" = waiver adds across Sleeper in the last 48h; a strong late-breaking signal (injury replacement, camp winner) that ADP may not reflect yet.
+- Practice participation (DNP / Limited / Full) is the best read on whether a Questionable player will actually play.
+- A player tagged IR / PUP / Out / Suspended cannot help in Week 1. Do not recommend one ahead of a healthy player at similar ADP unless the upside genuinely justifies a stash, and say so explicitly if you do.`;
 }
 
 async function streamClaude(sysPrompt, userPrompt, onChunk, onDone, onError) {
@@ -1602,7 +1762,7 @@ DRAFT VALUE RULES (these override everything else):
 - The available-player list is ordered by expert consensus ADP (average draft position from thousands of real drafts). ADP is your primary signal of draft value. Your recommendation should normally come from the first few players listed; deviate only slightly, and only for roster fit, bye conflicts, or injury news.
 - Raw fantasy point totals are NOT comparable across positions. Kickers and defenses accumulate large raw totals, but their week-to-week edge over a waiver-wire replacement is tiny. NEVER recommend a K or DEF before the final 2-3 rounds of the draft, no matter what their point totals show.
 - Positional scarcity drives early drafting: elite RB/WR (and top TE) go in early rounds because the drop-off to replacement is steep. QBs last longer, even in 6-pt passing TD leagues.
-- A player's 2025 points reflect last season only — trust ADP for 2026 outlook (rookies, team changes, age decline).
+- A player's point total reflects last season only — trust ADP for this year's outlook (rookies, team changes, age decline). A rookie with no stats is not a bad player; check ADP.
 
 STYLE:
 - Lead with your clear recommendation, then explain why
@@ -1712,9 +1872,12 @@ function analyzePlayer(pid) {
   if (!state.ai.panelOpen) toggleAIPanel();
   const q = `Should I draft ${p.name} (${p.pos}, ${p.team})? `
     + `Bye week ${p.bye || 'unknown'}. `
-    + (p.injuryStatus ? `Listed as ${p.injuryStatus}. ` : 'Healthy. ')
-    + (p.pts != null ? `Scored ${p.pts.toFixed(0)} fantasy pts in the 2025 season. ` : '')
-    + `Depth: ${p.depth === 1 ? 'starter' : p.depth === 2 ? '2nd string' : 'backup'}. `
+    + (p.adp != null ? `Expert ADP ${p.adp.toFixed(1)}. ` : 'No ADP (undrafted in expert mocks). ')
+    + (p.injuryStatus || (p.status && p.status !== 'Active') ? `Injury: ${injuryDetail(p)}. ` : 'Healthy. ')
+    + (p.pts != null ? `Scored ${p.pts.toFixed(0)} fantasy pts in the ${state.statsSeason||'last'} season. ` : 'No meaningful stats last season. ')
+    + (p.exp === 0 ? 'Rookie. ' : p.exp != null ? `Year ${p.exp+1}. ` : '')
+    + (p.trend >= 1500 ? `Trending: +${p.trend} waiver adds in 48h. ` : '')
+    + `Depth chart: ${p.depth === 1 ? 'starter' : p.depth === 2 ? '2nd string' : p.depth < 99 ? 'depth ' + p.depth : 'unlisted'}${p.depthPos ? ' (' + p.depthPos + ')' : ''}. `
     + `Analyze fit with my roster and give a clear draft or pass verdict.`;
   addAIMessage('user', `Analyze: ${p.name} (${p.pos} - ${p.team})`);
   runAIQuery(q, `Analyzing ${p.name}...`);
@@ -1767,7 +1930,9 @@ if (savedKey) {
   document.getElementById('key-status').innerHTML = '<span class="key-ok">API key loaded from previous session</span>';
   enableAIButtons(true);
 }
-loadData();
+// NOTE: data loading is kicked off by boot() at the very end of the page, after
+// saved settings/draft state are restored. Loading here would race that restore
+// (the cached fast-path completes synchronously).
 
 function renderTeamsView() {
   const el = document.getElementById('teams-view');
@@ -2284,7 +2449,7 @@ function updateDraftBar() {
 //  RESTORE DRAFT STATE ON LOAD
 // ═══════════════════════════════════════════════════════════
 function restoreDraftState() {
-  lsLoadSettings();
+  lsLoadSettings();   // scoring + team count: must be set before points/ADP are computed
   lsLoadTeams();
   lsLoadDraft();
   if (state.draft.started) {
@@ -2307,13 +2472,18 @@ document.getElementById('team-assign-modal').addEventListener('click', e => {
   if (e.target===document.getElementById('team-assign-modal')) closeTeamAssign();
 });
 
-const _origHideLoading = window.hideLoading;
-window.hideLoading = function() {
-  _origHideLoading();
-  restoreDraftState();
-  render();
+// ═══════════════════════════════════════════════════════════
+//  BOOT  — order matters:
+//  1. restore saved league settings + draft state (settings drive scoring,
+//     the ADP dataset, and replacement levels, so they must precede ranking)
+//  2. then load player data, which computes rankings with those settings
+// ═══════════════════════════════════════════════════════════
+function boot() {
+  try { restoreDraftState(); } catch (e) { console.warn('Could not restore saved state:', e); }
   if (state.draft.started) setView('board');
-};
+  loadData();
+}
+boot();
 </script>
 </body>
 </html>
