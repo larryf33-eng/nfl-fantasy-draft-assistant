@@ -694,7 +694,7 @@
       <div class="modal-field"><label>Number of Teams</label>
         <select id="ms-teams"><option value="8">8</option><option value="10">10</option><option value="12" selected>12</option><option value="14">14</option><option value="16">16</option></select>
       </div>
-      <div class="modal-field"><label>Draft Rounds</label><input type="number" id="ms-rounds" value="15" min="10" max="20"></div>
+      <div class="modal-field"><label>Draft Rounds</label><input type="number" id="ms-rounds" value="16" min="10" max="20"></div>
       <div class="modal-field"><label>Scoring Type</label>
         <select id="ms-scoring-type">
           <option value="league" selected>League Default</option>
@@ -711,11 +711,13 @@
       <div class="modal-field"><label>Pass TD</label><input type="number" id="sc-pass_td" value="6" step="1"></div>
       <div class="modal-field"><label>INT Thrown</label><input type="number" id="sc-pass_int" value="-2" step="1"></div>
       <div class="modal-field"><label>350+ Pass YD Bonus</label><input type="number" id="sc-bonus_pass_350" value="5" step="1"></div>
+      <div class="modal-field"><label>400+ Pass YD Bonus</label><input type="number" id="sc-bonus_pass_400" value="5" step="1"></div>
       <div class="modal-field"><label>450+ Pass YD Bonus</label><input type="number" id="sc-bonus_pass_450" value="10" step="1"></div>
       <div class="modal-field"><label>Pick Six Thrown</label><input type="number" id="sc-pick_six" value="-4" step="1"></div>
       <div class="modal-field"><label>Rush YD (pt/yd)</label><input type="number" id="sc-rush_yd" value="0.05" step="0.01"></div>
       <div class="modal-field"><label>Rush TD</label><input type="number" id="sc-rush_td" value="6" step="1"></div>
       <div class="modal-field"><label>150+ Rush YD Bonus</label><input type="number" id="sc-bonus_rush_150" value="5" step="1"></div>
+      <div class="modal-field"><label>200+ Rush YD Bonus</label><input type="number" id="sc-bonus_rush_200" value="5" step="1"></div>
       <div class="modal-field"><label>250+ Rush YD Bonus</label><input type="number" id="sc-bonus_rush_250" value="10" step="1"></div>
       <div class="modal-field"><label>Reception</label><input type="number" id="sc-rec" value="1" step="0.5"></div>
       <div class="modal-field"><label>Rec YD (pt/yd)</label><input type="number" id="sc-rec_yd" value="0.05" step="0.01"></div>
@@ -799,7 +801,7 @@
     <div class="sidebar-section">
       <h3>League</h3>
       <div class="setting-row"><label>Teams</label><span id="sb-teams" style="font-weight:700">12</span></div>
-      <div class="setting-row"><label>Rounds</label><span id="sb-rounds" style="font-weight:700">15</span></div>
+      <div class="setting-row"><label>Rounds</label><span id="sb-rounds" style="font-weight:700">16</span></div>
       <div class="setting-row"><label>Scoring</label><span id="sb-scoring" style="font-weight:700">League</span></div>
     </div>
     <div class="sidebar-section">
@@ -949,18 +951,21 @@ const state = {
   filter: { pos: 'ALL', search: '' },
   sort: { col: 'rank', dir: 1 },
   leagueSettings: {
-    teams: 12, rounds: 15, scoringType: 'league',
+    teams: 12, rounds: 16, scoringType: 'league', v: 1,
     scoring: null, // set below from LEAGUE_SCORING
   },
   ai: { apiKey: '', panelOpen: false, busy: false }
 };
 
-// League default scoring values
+// Bump when a saved-settings migration is added in lsLoadSettings().
+const SETTINGS_VERSION = 1;
+
+// League default scoring values — mirrors the Yahoo league's scoring page.
 const LEAGUE_SCORING = {
   // Offense
   pass_yd: 0.02, pass_td: 6, pass_int: -2,
-  bonus_pass_350: 5, bonus_pass_450: 10, pick_six: -4,
-  rush_yd: 0.05, rush_td: 6, bonus_rush_150: 5, bonus_rush_250: 10,
+  bonus_pass_350: 5, bonus_pass_400: 5, bonus_pass_450: 10, pick_six: -4,
+  rush_yd: 0.05, rush_td: 6, bonus_rush_150: 5, bonus_rush_200: 5, bonus_rush_250: 10,
   rec: 1, rec_yd: 0.05, rec_td: 6,
   bonus_rec_150: 5, bonus_rec_200: 5, bonus_rec_250: 10,
   ret_td: 6, two_pt: 2, fum_lost: -2, fum_rec_td: 6,
@@ -1741,7 +1746,7 @@ function buildDraftContext() {
   const scoringDetail = `PassYd=1/${Math.round(1/sc.pass_yd)}yd PassTD=${sc.pass_td} INT=${sc.pass_int} PickSix=${sc.pick_six} `
     + `RushYd=1/${Math.round(1/sc.rush_yd)}yd RushTD=${sc.rush_td} Rec=${sc.rec} RecYd=1/${Math.round(1/sc.rec_yd)}yd RecTD=${sc.rec_td} `
     + `FumLost=${sc.fum_lost} 2Pt=${sc.two_pt} RetTD=${sc.ret_td} | `
-    + `Big-game bonuses: Pass 350+=${sc.bonus_pass_350} 450+=${sc.bonus_pass_450}, Rush 150+=${sc.bonus_rush_150} 250+=${sc.bonus_rush_250}, `
+    + `Big-game bonuses: Pass 350+=${sc.bonus_pass_350} 400+=${sc.bonus_pass_400} 450+=${sc.bonus_pass_450}, Rush 150+=${sc.bonus_rush_150} 200+=${sc.bonus_rush_200} 250+=${sc.bonus_rush_250}, `
     + `Rec 150+=${sc.bonus_rec_150} 200+=${sc.bonus_rec_200} 250+=${sc.bonus_rec_250} | `
     + `K: FG 0-39=${sc.fg_0_19} 40-49=${sc.fg_40_49} 50+=${sc.fg_50p}, Miss 0-19=${sc.fgmiss_0_19} 20-29=${sc.fgmiss_20_29} 30-39=${sc.fgmiss_30_39} 40-49=${sc.fgmiss_40_49}, XP=${sc.xpt}/${sc.xpmiss} | `
     + `DEF: Sack=${sc.sack} INT=${sc.def_int} FumRec=${sc.def_fum_rec} TD=${sc.def_td} Safety=${sc.def_safety} Blk=${sc.def_blk} RetTD=${sc.def_ret_td}, `
@@ -2142,6 +2147,12 @@ function lsLoadSettings() {
       const scoring = { ...LEAGUE_SCORING, ...(d.scoring || {}) };
       Object.assign(state.leagueSettings, d);
       state.leagueSettings.scoring = scoring;
+      // One-time migration: the shipped default was 15 rounds, but the league
+      // is 16. Saves written before the fix carry no `v`, so correct a rounds
+      // value that is exactly the old wrong default and stamp the version so
+      // this never runs again. A deliberate 15 can be re-entered in Settings.
+      if (!d.v && state.leagueSettings.rounds === 15) state.leagueSettings.rounds = 16;
+      state.leagueSettings.v = SETTINGS_VERSION;
     }
   } catch {}
 }
