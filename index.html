@@ -233,6 +233,12 @@
     .bye-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; background: var(--surface2); }
     .bye-early { background: rgba(34,197,94,.15); color: var(--green); }
     .bye-late  { background: rgba(234,179,8,.15); color: var(--yellow); }
+    /* Same position + same bye as someone already on my roster */
+    .bye-clash { background: rgba(249,115,22,.18); color: var(--orange); }
+    .bye-warn  { color: var(--orange); font-size: 11px; cursor: help; }
+    /* The Bye column is hidden below 820px, so the warning moves under the
+       player's name there instead of disappearing. */
+    .bye-warn-sm { display: none; color: var(--orange); font-weight: 600; }
 
     .action-cell { display: flex; gap: 3px; }
     .btn-queue {
@@ -461,7 +467,10 @@
       /* "ADP bundled" becomes the first visible part — drop its separator. */
       #data-status > span:nth-child(2)::before { content: none; }
     }
-    @media (max-width: 1180px) {
+    /* Was 1180px with four tabs; the fifth (Sleepers) pushed the single-row
+       layout past 1430, so the tabs drop to their own row much earlier now.
+       Measured, not guessed — see the width sweep in the project notes. */
+    @media (max-width: 1450px) {
       /* View tabs take their own row (same pattern as the phone layout) so the
          buttons on the right keep full size instead of running off-screen. */
       header { flex-wrap: wrap; row-gap: 8px; }
@@ -478,7 +487,13 @@
       header .tagline, #data-status { display: none; }
       header h1 { font-size: 15px; }
       .view-tabs { order: 10; width: 100%; }
-      .view-tab { flex: 1; padding: 7px 2px; font-size: 11px; }
+      /* Five tabs on a phone: let the labels wrap and shrink again. The global
+         nowrap that keeps the desktop header from squeezing would otherwise
+         force the row wider than the screen. */
+      .view-tab {
+        flex: 1; min-width: 0; padding: 6px 1px;
+        font-size: 10px; white-space: normal; line-height: 1.15;
+      }
       .menu-btn { display: inline-block; }
 
       /* Sidebar becomes a slide-in drawer */
@@ -497,6 +512,7 @@
       #player-table th:nth-child(5), #player-table td:nth-child(5),
       #player-table th:nth-child(7), #player-table td:nth-child(7),
       #player-table th:nth-child(9), #player-table td:nth-child(9) { display: none; }
+      .bye-warn-sm { display: inline; }   /* Bye column is gone — surface it here */
       td { padding: 9px 6px; }
       .btn-queue, .btn-draft, .btn-undraft, .btn-analyze { padding: 7px 10px; font-size: 12px; }
       .stats-bar > div:last-child { display: none; } /* injury legend */
@@ -702,6 +718,30 @@
     }
     .lineup-row.bench-row { opacity: .72; }
 
+    /* ── Sleepers (value picks) ── */
+    .sleepers-list { display: flex; flex-direction: column; gap: 6px; }
+    .sleeper-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 10px;
+    }
+    .sleeper-card.drafted { opacity: .45; }
+    .sleeper-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sleeper-name { font-weight: 700; font-size: 13px; }
+    .sleeper-team { color: var(--muted); font-size: 11px; font-weight: 600; }
+    .sleeper-adp { color: var(--muted); font-size: 11px; }
+    .sleeper-why {
+      display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px;
+    }
+    .sleeper-why span {
+      font-size: 10px; color: var(--muted);
+      background: var(--surface2); border-radius: 3px; padding: 2px 6px;
+    }
+    .sleeper-why span:first-child { color: var(--accent); }
+    .sleeper-foot {
+      margin-top: 12px; font-size: 10px; color: var(--muted);
+      line-height: 1.5; max-width: 760px;
+    }
+
   </style>
 </head>
 <body>
@@ -812,6 +852,7 @@
     <button class="view-tab" id="view-board" onclick="setView('board')">📊 Draft Board</button>
     <button class="view-tab" id="view-log" onclick="setView('log')">📜 Pick Log</button>
     <button class="view-tab" id="view-teams" onclick="setView('teams')">👥 Teams</button>
+    <button class="view-tab" id="view-sleepers" onclick="setView('sleepers')">💎 Sleepers</button>
   </div>
   <button class="btn btn-primary" id="start-draft-btn" onclick="openDraftSetup()">🏈 Start Draft</button>
   <button class="btn btn-danger hidden" id="end-draft-btn" onclick="endDraft()">⏹ End Draft</button>
@@ -903,6 +944,7 @@
     <div id="board-view" class="view-hidden" style="flex:1;overflow:auto;padding:10px;"></div>
     <div id="log-view" class="view-hidden" style="flex:1;overflow:hidden;display:flex;flex-direction:column;"></div>
     <div id="teams-view" class="view-hidden" style="flex:1;overflow-y:auto;padding:12px;"></div>
+    <div id="sleepers-view" class="view-hidden" style="flex:1;overflow-y:auto;padding:12px;"></div>
   </div>
 
   <!-- AI Panel -->
@@ -982,7 +1024,8 @@ const state = {
     scoring: null, // set below from LEAGUE_SCORING
   },
   ai: { apiKey: '', panelOpen: false, busy: false },
-  teamsView: 'position'   // 'position' | 'lineup' — Teams tab layout, sticky per device
+  teamsView: 'position',  // 'position' | 'lineup' — Teams tab layout, sticky per device
+  valuePicks: []          // computed sleepers; rebuilt by recomputeRankings()
 };
 
 // Bump when a saved-settings migration is added in lsLoadSettings().
@@ -1421,11 +1464,83 @@ function recomputeRankings() {
     //    ADP order is left intact for ranked players — the expert consensus
     //    already prices in known injuries, and the Status column flags the rest.
     p.adp = lookupAdp(p);
+    // Keep the VBD figure. It is deliberately NOT used to order ADP-ranked
+    // players (see above), but the value-picks view needs it: a sleeper is a
+    // player whose value rank runs ahead of where the consensus drafts him.
+    p.vbd = vbd;
     p.rankVal = p.adp != null ? 100000 - p.adp * 100 : vbd;
   });
 
   state.players.sort((a,b) => b.rankVal - a.rankVal);
   state.players.forEach((p,i) => { p.rank = i+1; });
+  computeValuePicks();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  VALUE PICKS  ("Sleepers" in the UI)
+//
+//  NOTE: nothing to do with the Sleeper API, which is the app's player-data
+//  source. These are players whose underlying value runs ahead of where the
+//  expert consensus is drafting them.
+//
+//  There is no importable sleeper list — expert lists are editorial and have
+//  no API — but the two numbers that define a sleeper are already computed:
+//  VBD (value over replacement) and ADP (where he actually goes). Rank a
+//  player by each within his own position and the gap between those ranks is
+//  the signal. Depth chart, 48h waiver adds and experience refine it.
+//
+//  Skill positions only: a "sleeper kicker" is not a thing.
+// ═══════════════════════════════════════════════════════════
+const VALUE_POSITIONS = ['QB','RB','WR','TE'];
+const VALUE_PICK_LIMIT = 30;
+const TRENDING_HOT = 1500;   // waiver adds in 48h that count as a real signal
+
+function computeValuePicks() {
+  const picks = [];
+
+  VALUE_POSITIONS.forEach(pos => {
+    // Everyone at this position who could actually be drafted and play
+    const pool = state.players.filter(p => p.pos === pos && !p.unavailable);
+    if (!pool.length) return;
+
+    // Rank by value, and separately by where the consensus takes them
+    const byValue = [...pool].sort((a,b) => b.vbd - a.vbd);
+    byValue.forEach((p,i) => { p._vRank = i + 1; });
+
+    const withAdp = pool.filter(p => p.adp != null).sort((a,b) => a.adp - b.adp);
+    withAdp.forEach((p,i) => { p._aRank = i + 1; });
+    // Nobody drafts them at all: treat as just past the end of the board so a
+    // high-value unranked player still registers as a gap rather than a divide
+    // by nothing.
+    const offBoard = withAdp.length + 8;
+    pool.forEach(p => { if (p.adp == null) p._aRank = offBoard; });
+
+    pool.forEach(p => {
+      // Only players good enough to matter — roughly startable range
+      if (p._vRank > state.leagueSettings.teams * 3) return;
+      const gap = p._aRank - p._vRank;          // positive = drafted later than his value
+      if (gap < 3) return;                       // priced about right; not a sleeper
+
+      let score = gap;
+      const why = [`Value ranks ${pos}${p._vRank}, ADP ${p.adp != null ? `${pos}${p._aRank}` : 'undrafted'}`];
+
+      if (p.adp == null) { score += 4; why.push('outside consensus ADP entirely'); }
+      if (p.depth === 1) { score += 6; why.push('listed starter'); }
+      else if (p.depth === 2) { score += 2; why.push('2nd on the depth chart'); }
+      if (p.trend >= TRENDING_HOT) {
+        score += Math.min(12, p.trend / 1000);
+        why.push(`+${p.trend.toLocaleString()} waiver adds in 48h`);
+      }
+      if (p.exp === 0) { score += 2; why.push('rookie'); }
+      else if (p.exp === 1 || p.exp === 2) { score += 3; why.push(`year ${p.exp + 1} — typical breakout window`); }
+      if (p.injuryStatus) { score -= 6; why.push(`injury flag: ${p.injuryStatus}`); }
+
+      picks.push({ id: p.id, score, gap, why });
+    });
+  });
+
+  picks.sort((a,b) => b.score - a.score);
+  state.valuePicks = picks.slice(0, VALUE_PICK_LIMIT);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1435,6 +1550,8 @@ function render() {
   const showDrafted = document.getElementById('show-drafted').checked;
   const search = document.getElementById('search-box').value.toLowerCase();
   const filterPos = state.filter.pos;
+
+  buildMyByeIndex();   // must run before playerRow(), which reads MY_BYE_INDEX
 
   let list = state.players.filter(p => {
     if (!showDrafted && state.drafted.has(p.id)) return false;
@@ -1457,6 +1574,7 @@ function render() {
   document.getElementById('stat-drafted').textContent = drafted;
   document.getElementById('stat-available').textContent = (total - drafted).toLocaleString();
   document.getElementById('visible-count').textContent = `${list.length} shown`;
+  if (currentView === 'sleepers') renderSleepersView();   // keep it live as picks come off the board
   updateSidebar();
 }
 
@@ -1477,6 +1595,22 @@ function injuryDetail(p) {
   return bits.join(' · ') || 'Healthy';
 }
 
+// Bye-week conflicts against my own roster, keyed "POS|BYE" -> [player names].
+// Rebuilt once per render(): playerRow runs for every visible row, so it must
+// not walk state.players (11k entries) per row.
+let MY_BYE_INDEX = {};
+function buildMyByeIndex() {
+  MY_BYE_INDEX = {};
+  if (!state.myTeam.length) return;   // render() runs on every keystroke — skip the map build
+  const pm = Object.fromEntries(state.players.map(p => [p.id, p]));
+  state.myTeam.forEach(t => {
+    const p = pm[t.id];
+    if (!p || !p.bye) return;
+    const key = p.pos + '|' + p.bye;
+    (MY_BYE_INDEX[key] ||= []).push(p.name);
+  });
+}
+
 function playerRow(p) {
   const drafted = state.drafted.has(p.id);
   const inQueue = state.queue.includes(p.id);
@@ -1493,8 +1627,16 @@ function playerRow(p) {
                    : p.depth<99 ?`<span class="depth-3">${p.depth}${p.depth===3?'rd':'th'}</span>`
                    :              `<span class="depth-3">—</span>`;
 
+  // Warn when an available player shares a bye week with someone already on my
+  // roster at the same position — drafting them leaves that spot unfillable
+  // that week. Only for undrafted players; a player I already own isn't a choice.
+  const clash = (!drafted && p.bye) ? (MY_BYE_INDEX[p.pos + '|' + p.bye] || []) : [];
+  const clashIcon = clash.length
+    ? ` <span class="bye-warn" title="Bye conflict — your ${p.pos}${clash.length>1?'s':''} ${clash.join(', ')} ${clash.length>1?'are':'is'} also on bye week ${p.bye}">⚠</span>`
+    : '';
+
   const bye = p.bye
-    ? `<span class="bye-badge ${p.bye<=5?'bye-early':p.bye>=14?'bye-late':''}" title="Bye week ${p.bye}">Wk ${p.bye}</span>`
+    ? `<span class="bye-badge ${clash.length?'bye-clash':(p.bye<=5?'bye-early':p.bye>=14?'bye-late':'')}" title="Bye week ${p.bye}">Wk ${p.bye}</span>${clashIcon}`
     : `<span style="color:var(--muted);font-size:11px">—</span>`;
 
   const pts = p.pts!=null
@@ -1521,7 +1663,7 @@ function playerRow(p) {
     <td class="rank">${p.visRank||'—'}</td>
     <td>
       <div class="player-name">${esc(p.name)}${p.trend>=1500?` <span class="trend-badge" title="Trending: ${p.trend.toLocaleString()} adds in the last 48h">🔥</span>`:''}</div>
-      <div class="player-info">${p.age?`Age ${p.age}`:''}${p.exp!=null?` · ${p.exp===0?'Rookie':'Yr '+(p.exp+1)}`:''}${p.depthPos?` · ${esc(p.depthPos)}`:''}</div>
+      <div class="player-info">${p.age?`Age ${p.age}`:''}${p.exp!=null?` · ${p.exp===0?'Rookie':'Yr '+(p.exp+1)}`:''}${p.depthPos?` · ${esc(p.depthPos)}`:''}${clash.length?` · <span class="bye-warn-sm">⚠ Bye ${p.bye} conflict</span>`:''}</div>
     </td>
     <td><span class="pos-badge pos-${p.pos}">${p.pos}</span></td>
     <td><strong>${p.team}</strong></td>
@@ -2515,17 +2657,114 @@ function mockAutoPick() {
 // ═══════════════════════════════════════════════════════════
 let currentView = 'players';
 
+// Tab id is "view-<name>" but the panes are not named consistently: the player
+// table's pane is #player-view (singular). setView used to derive the pane id as
+// name + '-view', so 'players' looked up a #players-view that does not exist and
+// the player table was never hidden — every other view rendered *underneath* the
+// full table. Map the ids explicitly instead of deriving them.
+const VIEW_PANES = {
+  players: 'player-view', board: 'board-view', log: 'log-view',
+  teams: 'teams-view', sleepers: 'sleepers-view'
+};
+
 function setView(v) {
   currentView = v;
-  ['players','board','log','teams'].forEach(name => {
+  Object.keys(VIEW_PANES).forEach(name => {
     const tab = document.getElementById('view-'+name);
     if (tab) tab.classList.toggle('active', name===v);
-    const el = document.getElementById(name+'-view');
+    const el = document.getElementById(VIEW_PANES[name]);
     if (el) el.classList.toggle('view-hidden', name!==v);
   });
+  // The toolbar (position filters, search, show-drafted) only drives the player
+  // table, so it goes with it.
+  const tb = document.querySelector('.toolbar');
+  if (tb) tb.classList.toggle('view-hidden', v !== 'players');
   if (v==='board') renderDraftGrid();
   if (v==='log')   renderPickLog();
   if (v==='teams') renderTeamsView();
+  if (v==='sleepers') renderSleepersView();
+}
+
+function renderSleepersView() {
+  const el = document.getElementById('sleepers-view');
+  const pm = Object.fromEntries(state.players.map(p => [p.id, p]));
+  const showDrafted = document.getElementById('show-drafted').checked;
+
+  const rows = (state.valuePicks || [])
+    .map(v => ({ v, p: pm[v.id] }))
+    .filter(({p}) => p && (showDrafted || !state.drafted.has(p.id)));
+
+  if (!state.players.length) {
+    el.innerHTML = '<div class="team-no-draft">Waiting for player data…</div>';
+    return;
+  }
+  if (!rows.length) {
+    el.innerHTML = '<div class="team-no-draft">No sleepers stand out right now.<br><br>' +
+      'They appear once player stats and ADP have loaded — and reappear as the board thins out.</div>';
+    return;
+  }
+
+  const aiBtn = state.ai.apiKey
+    ? `<button class="btn btn-ai" onclick="askAiAboutSleepers()">🤖 Ask the advisor about these</button>`
+    : `<span style="font-size:11px;color:var(--muted)">Add an API key in the AI panel to get roster-aware commentary on these.</span>`;
+
+  const cards = rows.map(({v, p}) => {
+    const drafted = state.drafted.has(p.id);
+    const clash = (!drafted && p.bye) ? (MY_BYE_INDEX[p.pos + '|' + p.bye] || []) : [];
+    return `<div class="sleeper-card ${drafted?'drafted':''}">
+      <div class="sleeper-top">
+        <span class="pos-badge pos-${p.pos}">${p.pos}</span>
+        <span class="sleeper-name">${esc(p.name)}</span>
+        <span class="sleeper-team">${esc(p.team || '')}</span>
+        ${p.bye ? `<span class="bye-badge ${clash.length?'bye-clash':''}" title="Bye week ${p.bye}">Wk ${p.bye}</span>` : ''}
+        ${clash.length ? `<span class="bye-warn" title="Bye conflict — your ${p.pos} ${clash.join(', ')} also on bye ${p.bye}">⚠</span>` : ''}
+        <span class="sleeper-adp">${p.adp != null ? `ADP ${p.adp.toFixed(1)}` : 'no ADP'}</span>
+        <span class="spacer" style="flex:1"></span>
+        ${drafted
+          ? '<span style="font-size:10px;color:var(--muted)">drafted</span>'
+          : `<button class="btn-queue ${state.queue.includes(p.id)?'queued':''}" onclick="toggleQueue('${p.id}');renderSleepersView()" title="Queue">${state.queue.includes(p.id)?'★':'☆'}</button>
+             <button class="btn-draft" onclick="draftPlayer('${p.id}');renderSleepersView()">Draft</button>`}
+      </div>
+      <div class="sleeper-why">${v.why.map(w => `<span>${esc(w)}</span>`).join('')}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="teams-toolbar">
+      <span style="font-size:12px;color:var(--muted)">
+        ${rows.length} value picks · ranked by how far each player's value runs ahead of his ADP
+      </span>
+      <span style="flex:1"></span>
+      ${aiBtn}
+    </div>
+    <div class="sleepers-list">${cards}</div>
+    <div class="sleeper-foot">
+      Computed from your league's scoring — value over replacement vs expert ADP, adjusted for depth
+      chart, 48-hour waiver adds and experience. Recalculated whenever data or settings change.
+      True rookie breakouts have no prior stats, so they surface here mainly through depth chart and trending adds.
+    </div>`;
+}
+
+// Hand the computed list to the advisor, which adds roster/round context
+function askAiAboutSleepers() {
+  const pm = Object.fromEntries(state.players.map(p => [p.id, p]));
+  const list = (state.valuePicks || [])
+    .filter(v => !state.drafted.has(v.id))
+    .slice(0, 12)
+    .map((v,i) => {
+      const p = pm[v.id];
+      if (!p) return null;
+      return `${i+1}. ${p.name} (${p.pos}, ${p.team}${p.bye?`, bye ${p.bye}`:''}) — ${v.why.join('; ')}`;
+    })
+    .filter(Boolean).join('\n');
+  if (!list || state.ai.busy) return;
+  if (!state.ai.panelOpen) toggleAIPanel();
+  addAIMessage('user', 'Which of my board\'s value picks are worth targeting?');
+  runAIQuery(
+    `These are the biggest value gaps on my board right now — players whose value-over-replacement rank runs ahead of their ADP:\n\n${list}\n\n` +
+    `Given my roster and where we are in the draft, which of these are genuinely worth targeting and which are value traps? Be specific about the round I should be looking at each one.`,
+    'Reviewing your value picks...'
+  );
 }
 
 function renderDraftGrid() {
