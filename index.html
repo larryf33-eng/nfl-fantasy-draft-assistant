@@ -675,6 +675,33 @@
       padding: 48px 20px; font-size: 13px;
     }
 
+    /* ── Teams: starting-lineup view ── */
+    .teams-toolbar {
+      margin-bottom: 10px; display: flex; align-items: center;
+      gap: 12px; flex-wrap: wrap;
+    }
+    .teams-view-toggle { flex-shrink: 0; }
+    .lineup-head {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 9px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--muted);
+      padding-bottom: 3px; margin-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .lineup-head.bench { margin-top: 8px; }
+    .lineup-head span { color: var(--accent); }
+    .lineup-head.bench span { color: var(--muted); }
+    .lineup-row {
+      display: flex; align-items: center; gap: 5px;
+      padding: 2px 0; font-size: 11px;
+    }
+    .lineup-row.empty .pos-badge { opacity: .45; }
+    .lineup-empty-label {
+      flex: 1; color: var(--muted); font-size: 10px;
+      font-style: italic; opacity: .7;
+    }
+    .lineup-row.bench-row { opacity: .72; }
+
   </style>
 </head>
 <body>
@@ -954,7 +981,8 @@ const state = {
     teams: 12, rounds: 16, scoringType: 'league', v: 1,
     scoring: null, // set below from LEAGUE_SCORING
   },
-  ai: { apiKey: '', panelOpen: false, busy: false }
+  ai: { apiKey: '', panelOpen: false, busy: false },
+  teamsView: 'position'   // 'position' | 'lineup' — Teams tab layout, sticky per device
 };
 
 // Bump when a saved-settings migration is added in lsLoadSettings().
@@ -983,6 +1011,12 @@ const SCORING_FIELDS = Object.keys(LEAGUE_SCORING);
 state.leagueSettings.scoring = { ...LEAGUE_SCORING };
 
 const POSITIONS = ['QB','RB','WR','TE','K','DEF'];
+
+// Starting lineup for the league. Order here is the order shown on the team
+// card; anything drafted once every matching slot is taken drops to the bench.
+// Add 'FLEX' here if the league adds one (fillLineup treats it as RB/WR/TE).
+const LINEUP_SLOTS = ['QB','WR','WR','WR','RB','RB','TE','K','DEF'];
+const FLEX_ELIGIBLE = ['RB','WR','TE'];
 
 // ═══════════════════════════════════════════════════════════
 //  BUNDLED EXPERT ADP  (2026 PPR, 12-team · FantasyFootballCalculator consensus)
@@ -2001,6 +2035,58 @@ if (savedKey) {
 // saved settings/draft state are restored. Loading here would race that restore
 // (the cached fast-path completes synchronously).
 
+// Walk a team's picks in draft order and drop each into the first open
+// starting slot for its position; once those are full the pick goes to the
+// bench. Returns the slot list (with empties preserved so gaps are visible)
+// plus the bench, in draft order.
+function fillLineup(picks, pm) {
+  const slots = LINEUP_SLOTS.map(pos => ({ pos, entry: null }));
+  const bench = [];
+  [...picks]
+    .sort((a, b) => (a.overall || 0) - (b.overall || 0))
+    .forEach(pk => {
+      const p = pm[pk.playerId];
+      if (!p) return;
+      const open = slots.find(s => !s.entry &&
+        (s.pos === p.pos || (s.pos === 'FLEX' && FLEX_ELIGIBLE.includes(p.pos))));
+      if (open) open.entry = { p, overall: pk.overall };
+      else bench.push({ p, overall: pk.overall });
+    });
+  return { slots, bench };
+}
+
+function setTeamsView(mode) {
+  state.teamsView = mode === 'lineup' ? 'lineup' : 'position';
+  try { localStorage.setItem(LS.TEAMS_VIEW, state.teamsView); } catch {}
+  renderTeamsView();
+}
+
+// One roster line: "#42  Player Name  TEAM  Bye7"
+function teamPlayerRow(p, overall) {
+  const inj = p.injuryStatus
+    ? ` <span class="inj-badge inj-${p.injuryStatus.charAt(0)}" style="font-size:9px;padding:0 3px" title="${esc(injuryDetail(p))}">${p.injuryStatus.charAt(0)}</span>`
+    : '';
+  return `<span class="team-player-pick">#${overall}</span>
+    <span class="team-player-name">${esc(p.name)}${inj}</span>
+    <span class="team-player-team">${esc(p.team || '')}</span>
+    ${p.bye ? `<span style="font-size:9px;color:var(--muted)">Bye${p.bye}</span>` : ''}`;
+}
+
+function renderTeamCard(team, idx, isMine, pickCount, bodyHTML) {
+  return `<div class="team-card ${isMine?'my-team-card':''}">
+    <div class="team-card-header ${isMine?'mine':''}">
+      <div class="team-card-name">
+        <input value="${team.name.replace(/"/g,'&quot;')}"
+               onchange="renameTeam(${idx}, this.value)"
+               title="Click to rename">
+      </div>
+      ${isMine ? '<span style="font-size:10px;color:var(--accent);font-weight:700">★ MY TEAM</span>' : ''}
+      <span class="team-card-picks">${pickCount} picks</span>
+    </div>
+    <div class="team-card-body">${bodyHTML}</div>
+  </div>`;
+}
+
 function renderTeamsView() {
   const el = document.getElementById('teams-view');
   const pm = Object.fromEntries(state.players.map(p=>[p.id,p]));
@@ -2035,6 +2121,30 @@ function renderTeamsView() {
 
     let bodyHTML = '';
     let hasAny = false;
+
+    if (state.teamsView === 'lineup') {
+      const { slots, bench } = fillLineup(picks, pm);
+      hasAny = picks.length > 0;
+      const filled = slots.filter(s => s.entry).length;
+      bodyHTML += `<div class="lineup-head">Starters <span>${filled}/${slots.length}</span></div>`;
+      slots.forEach(s => {
+        const badge = `<span class="pos-badge pos-${s.pos}" style="font-size:9px;padding:1px 4px;width:26px;text-align:center;flex-shrink:0">${s.pos}</span>`;
+        bodyHTML += s.entry
+          ? `<div class="lineup-row">${badge}${teamPlayerRow(s.entry.p, s.entry.overall)}</div>`
+          : `<div class="lineup-row empty">${badge}<span class="lineup-empty-label">— empty —</span></div>`;
+      });
+      if (bench.length) {
+        bodyHTML += `<div class="lineup-head bench">Bench <span>${bench.length}</span></div>`;
+        bench.forEach(({p, overall}) => {
+          bodyHTML += `<div class="lineup-row bench-row">
+            <span class="pos-badge pos-${p.pos}" style="font-size:9px;padding:1px 4px;width:26px;text-align:center;flex-shrink:0">${p.pos}</span>
+            ${teamPlayerRow(p, overall)}</div>`;
+        });
+      }
+      if (!hasAny) bodyHTML = '<div class="team-empty">No picks yet</div>';
+      return renderTeamCard(team, idx, isMine, pickCount, bodyHTML);
+    }
+
     POS_ORDER.forEach(pos => {
       if (!byPos[pos] || !byPos[pos].length) return;
       hasAny = true;
@@ -2056,24 +2166,17 @@ function renderTeamsView() {
       bodyHTML = '<div class="team-empty">No picks yet</div>';
     }
 
-    return `<div class="team-card ${isMine?'my-team-card':''}">
-      <div class="team-card-header ${isMine?'mine':''}">
-        <div class="team-card-name">
-          <input value="${team.name.replace(/"/g,'&quot;')}"
-                 onchange="renameTeam(${idx}, this.value)"
-                 title="Click to rename"
-                 ${isMine?'':''}>
-        </div>
-        ${isMine ? '<span style="font-size:10px;color:var(--accent);font-weight:700">★ MY TEAM</span>' : ''}
-        <span class="team-card-picks">${pickCount} picks</span>
-      </div>
-      <div class="team-card-body">${bodyHTML}</div>
-    </div>`;
+    return renderTeamCard(team, idx, isMine, pickCount, bodyHTML);
   }).join('');
 
   const totalDrafted = state.draft.picks.length;
+  const lineup = state.teamsView === 'lineup';
   el.innerHTML = `
-    <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px">
+    <div class="teams-toolbar">
+      <div class="view-tabs teams-view-toggle">
+        <button class="view-tab ${lineup?'':'active'}" onclick="setTeamsView('position')">By Position</button>
+        <button class="view-tab ${lineup?'active':''}" onclick="setTeamsView('lineup')">Starting Lineup</button>
+      </div>
       <span style="font-size:12px;color:var(--muted)">${totalDrafted} total picks · ${n} teams · Click any team name to rename</span>
     </div>
     <div class="teams-grid">${cards}</div>`;
@@ -2135,7 +2238,7 @@ function renameTeam(idx, name) {
 // ═══════════════════════════════════════════════════════════
 //  LOCALSTORAGE PERSISTENCE
 // ═══════════════════════════════════════════════════════════
-const LS = { SETTINGS:'ff_settings3', TEAMS:'ff_teams2', DRAFT:'ff_draft2', API_KEY:'ff_api_key' };
+const LS = { SETTINGS:'ff_settings3', TEAMS:'ff_teams2', DRAFT:'ff_draft2', API_KEY:'ff_api_key', TEAMS_VIEW:'ff_teamsview' };
 
 function lsSaveSettings() { localStorage.setItem(LS.SETTINGS, JSON.stringify(state.leagueSettings)); }
 function lsLoadSettings() {
@@ -2522,6 +2625,10 @@ function updateDraftBar() {
 //  RESTORE DRAFT STATE ON LOAD
 // ═══════════════════════════════════════════════════════════
 function restoreDraftState() {
+  try {
+    const tv = localStorage.getItem(LS.TEAMS_VIEW);
+    if (tv === 'lineup' || tv === 'position') state.teamsView = tv;
+  } catch {}
   lsLoadSettings();   // scoring + team count: must be set before points/ADP are computed
   lsLoadTeams();
   lsLoadDraft();
