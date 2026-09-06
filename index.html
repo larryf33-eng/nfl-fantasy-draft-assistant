@@ -737,6 +737,24 @@
       background: var(--surface2); border-radius: 3px; padding: 2px 6px;
     }
     .sleeper-why span:first-child { color: var(--accent); }
+    /* ── Draft Board: optional split with the player list ── */
+    .board-toolbar { margin-bottom: 8px; }
+    .board-split-toggle {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--muted); cursor: pointer;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 10px; user-select: none;
+    }
+    .board-split-toggle:hover { color: var(--text); border-color: var(--accent); }
+    .board-split-toggle input { cursor: pointer; }
+    /* Split: player list takes the top ~45%, board scrolls beneath it. Both
+       need min-height:0 or a flex child refuses to shrink below its content. */
+    .main-panel.board-split #player-view {
+      flex: 0 0 45%; min-height: 0;
+      border-bottom: 2px solid var(--border);
+    }
+    .main-panel.board-split #board-view { flex: 1 1 auto; min-height: 0; }
+
     .sleeper-foot {
       margin-top: 12px; font-size: 10px; color: var(--muted);
       line-height: 1.5; max-width: 760px;
@@ -1025,7 +1043,8 @@ const state = {
   },
   ai: { apiKey: '', panelOpen: false, busy: false },
   teamsView: 'position',  // 'position' | 'lineup' — Teams tab layout, sticky per device
-  valuePicks: []          // computed sleepers; rebuilt by recomputeRankings()
+  valuePicks: [],         // computed sleepers; rebuilt by recomputeRankings()
+  boardShowPlayers: false // Draft Board: keep the player list open above the grid
 };
 
 // Bump when a saved-settings migration is added in lsLoadSettings().
@@ -2380,7 +2399,7 @@ function renameTeam(idx, name) {
 // ═══════════════════════════════════════════════════════════
 //  LOCALSTORAGE PERSISTENCE
 // ═══════════════════════════════════════════════════════════
-const LS = { SETTINGS:'ff_settings3', TEAMS:'ff_teams2', DRAFT:'ff_draft2', API_KEY:'ff_api_key', TEAMS_VIEW:'ff_teamsview' };
+const LS = { SETTINGS:'ff_settings3', TEAMS:'ff_teams2', DRAFT:'ff_draft2', API_KEY:'ff_api_key', TEAMS_VIEW:'ff_teamsview', BOARD_SPLIT:'ff_boardsplit' };
 
 function lsSaveSettings() { localStorage.setItem(LS.SETTINGS, JSON.stringify(state.leagueSettings)); }
 function lsLoadSettings() {
@@ -2675,14 +2694,27 @@ function setView(v) {
     const el = document.getElementById(VIEW_PANES[name]);
     if (el) el.classList.toggle('view-hidden', name!==v);
   });
-  // The toolbar (position filters, search, show-drafted) only drives the player
-  // table, so it goes with it.
+  // On the Draft Board the player list can optionally stay open above the grid,
+  // so you can watch the board and draft from the same screen. Anywhere else the
+  // player table and its toolbar belong to the Players tab alone.
+  const split = v === 'board' && state.boardShowPlayers;
+  if (split) {
+    document.getElementById('player-view').classList.remove('view-hidden');
+  }
   const tb = document.querySelector('.toolbar');
-  if (tb) tb.classList.toggle('view-hidden', v !== 'players');
+  if (tb) tb.classList.toggle('view-hidden', v !== 'players' && !split);
+  document.querySelector('.main-panel').classList.toggle('board-split', split);
   if (v==='board') renderDraftGrid();
   if (v==='log')   renderPickLog();
   if (v==='teams') renderTeamsView();
   if (v==='sleepers') renderSleepersView();
+  if (split) render();   // the player table may be stale from an earlier view
+}
+
+function toggleBoardPlayers(on) {
+  state.boardShowPlayers = !!on;
+  try { localStorage.setItem(LS.BOARD_SPLIT, on ? '1' : '0'); } catch {}
+  setView('board');   // re-applies the split layout and re-renders the grid
 }
 
 function renderSleepersView() {
@@ -2803,7 +2835,15 @@ function renderDraftGrid() {
     h += '</tr>';
   }
   h += '</tbody></table>';
-  document.getElementById('board-view').innerHTML = `<div class="draft-board-wrap">${h}</div>`;
+  const split = state.boardShowPlayers;
+  document.getElementById('board-view').innerHTML = `
+    <div class="board-toolbar">
+      <label class="board-split-toggle" title="Keep the player list open above the board so you can draft without switching tabs">
+        <input type="checkbox" ${split?'checked':''} onchange="toggleBoardPlayers(this.checked)">
+        Show player list above
+      </label>
+    </div>
+    <div class="draft-board-wrap">${h}</div>`;
   setTimeout(()=>{ const c=document.querySelector('.cur-pick'); if(c) c.scrollIntoView({behavior:'smooth',block:'center'}); },60);
 }
 
@@ -2867,6 +2907,7 @@ function restoreDraftState() {
   try {
     const tv = localStorage.getItem(LS.TEAMS_VIEW);
     if (tv === 'lineup' || tv === 'position') state.teamsView = tv;
+    state.boardShowPlayers = localStorage.getItem(LS.BOARD_SPLIT) === '1';
   } catch {}
   lsLoadSettings();   // scoring + team count: must be set before points/ADP are computed
   lsLoadTeams();
